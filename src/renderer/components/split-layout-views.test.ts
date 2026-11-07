@@ -98,6 +98,8 @@ vi.mock('./team/pane.js', () => ({
   hideAllTeamPanes: vi.fn(), attachTeamToContainer: vi.fn(), getTeamInstance: vi.fn(),
 }));
 vi.mock('./tab-bar.js', () => ({ quickNewSession: vi.fn() }));
+const sessionWindow = { focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn() };
+vi.mock('../session-window.js', () => sessionWindow);
 
 const rafQueue: Array<() => void> = [];
 vi.stubGlobal('requestAnimationFrame', (cb: () => void) => { rafQueue.push(cb); return rafQueue.length; });
@@ -234,7 +236,7 @@ describe('layout views', () => {
       expect(cta).not.toBeNull();
       expect(cta!.ownerDocument).toBe(otherDoc);
       cta!.click();
-      expect(quickNewSession).toHaveBeenCalledWith('B');
+      expect(quickNewSession).toHaveBeenCalledWith('B', otherDoc);
     } finally {
       destroyLayoutView(view);
     }
@@ -261,7 +263,7 @@ describe('layout views', () => {
       const add = container.querySelector<HTMLButtonElement>('.swarm-empty-add-btn');
       expect(add).not.toBeNull();
       add!.click();
-      expect(quickNewSession).toHaveBeenCalledWith('B');
+      expect(quickNewSession).toHaveBeenCalledWith('B', otherDoc);
     } finally {
       destroyLayoutView(view);
     }
@@ -302,5 +304,58 @@ describe('layout views', () => {
     } finally {
       destroyLayoutView(view);
     }
+  });
+
+  describe('main view of the detached active project', () => {
+    function detachedActive(mainSelection: string | null) {
+      const b = project('B', [{ id: 'pb1', cliSessionId: null }, { id: 'pbk', type: 'kanban', cliSessionId: null }], 'pb1');
+      fakeState.projects = [b];
+      fakeState.activeProject = b;
+      windowState.setDetachedProjectId('B');
+      windowState.setMainViewSelection(mainSelection);
+      renderLayout();
+      return b;
+    }
+
+    it('with no project-level tab selected shows the placeholder, not "no sessions"', () => {
+      detachedActive(null);
+      const ph = mainContainer.querySelector('.session-window-placeholder');
+      expect(ph).not.toBeNull();
+      expect(ph!.textContent).toContain("This project's sessions are open in another window");
+      expect(mainContainer.textContent).not.toContain('No sessions');
+      // The kanban pane is not shown while nothing is selected.
+      expect(panes.get('pbk')?.element.classList.contains('hidden') ?? true).toBe(true);
+      // Its CLI session is never laid out in the main window.
+      expect(panes.get('pb1')?.element.parentElement ?? null).not.toBe(mainContainer);
+    });
+
+    it('placeholder buttons show the sessions window or bring it back', () => {
+      detachedActive(null);
+      const [show, back] = Array.from(mainContainer.querySelectorAll<HTMLButtonElement>('.session-window-placeholder button'));
+      expect(show.textContent).toBe('Show');
+      expect(back.textContent).toBe('Bring back');
+      show.click();
+      expect(sessionWindow.focusSessionWindow).toHaveBeenCalled();
+      back.click();
+      expect(sessionWindow.closeSessionWindow).toHaveBeenCalled();
+    });
+
+    it('a selected project-level tab is shown instead of the placeholder', () => {
+      detachedActive('pbk');
+      expect(mainContainer.querySelector('.session-window-placeholder')).toBeNull();
+      const kb = panes.get('pbk')!.element;
+      expect(kb.parentElement).toBe(mainContainer);
+      expect(kb.classList.contains('hidden')).toBe(false);
+    });
+
+    it('a project with no project-level tabs at all also shows the placeholder', () => {
+      const b = project('B', [{ id: 'pb2', cliSessionId: null }], 'pb2');
+      fakeState.projects = [b];
+      fakeState.activeProject = b;
+      windowState.setDetachedProjectId('B');
+      renderLayout();
+      expect(mainContainer.querySelector('.session-window-placeholder')).not.toBeNull();
+      expect(mainContainer.querySelector('.empty-state-cta')).toBeNull();
+    });
   });
 });

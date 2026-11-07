@@ -8,6 +8,9 @@ import {
   viewTabs,
   projectIdForView,
   PROJECT_LEVEL_TAB_TYPES,
+  setMainViewSelection,
+  viewActiveSessionId,
+  viewKindFor,
   _resetForTesting,
 } from './session-window-state.js';
 
@@ -76,5 +79,57 @@ describe('session-window-state', () => {
     off();
     setDetachedProjectId('q');
     expect(cb).toHaveBeenCalledTimes(2);
+  });
+
+  describe('viewActiveSessionId', () => {
+    const project = (activeSessionId: string | null) => ({
+      id: 'p',
+      activeSessionId,
+      sessions: [sess('ov', 'project-tab'), sess('cli1'), sess('kb', 'kanban'), sess('cli2')],
+    } as unknown as ProjectRecord);
+
+    it('a project that is not detached: the main view shows project.activeSessionId', () => {
+      expect(viewActiveSessionId('main', project('cli2'))).toBe('cli2');
+      expect(viewActiveSessionId('sessions', project('cli2'))).toBeNull();
+    });
+
+    it('detached: the sessions view keeps activeSessionId; the main view its own transient selection', () => {
+      setDetachedProjectId('p');
+      expect(viewActiveSessionId('sessions', project('cli2'))).toBe('cli2');
+      // Nothing selected in the main view yet: no tab there (the placeholder shows).
+      expect(viewActiveSessionId('main', project('cli2'))).toBeNull();
+      setMainViewSelection('kb');
+      expect(viewActiveSessionId('main', project('cli2'))).toBe('kb');
+      expect(viewActiveSessionId('sessions', project('cli2'))).toBe('cli2');
+    });
+
+    it('detached: a main selection that is not a main-view tab is ignored', () => {
+      setDetachedProjectId('p');
+      setMainViewSelection('cli1');
+      expect(viewActiveSessionId('main', project('cli2'))).toBeNull();
+      setMainViewSelection('gone');
+      expect(viewActiveSessionId('main', project('cli2'))).toBeNull();
+    });
+
+    it('detached: activeSessionId on a project-level tab leaves the sessions view on its first tab', () => {
+      setDetachedProjectId('p');
+      expect(viewActiveSessionId('sessions', project('ov'))).toBe('cli1');
+    });
+
+    it('a detach change clears the main selection', () => {
+      setDetachedProjectId('p');
+      setMainViewSelection('kb');
+      setDetachedProjectId(null);
+      setDetachedProjectId('p');
+      expect(viewActiveSessionId('main', project('cli2'))).toBeNull();
+    });
+  });
+
+  it('viewKindFor', () => {
+    expect(viewKindFor('p', sess('a'))).toBe('main');
+    setDetachedProjectId('p');
+    expect(viewKindFor('p', sess('a'))).toBe('sessions');
+    expect(viewKindFor('p', sess('k', 'kanban'))).toBe('main');
+    expect(viewKindFor('q', sess('a'))).toBe('main');
   });
 });

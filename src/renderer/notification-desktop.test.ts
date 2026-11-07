@@ -35,6 +35,7 @@ const mockAppState = vi.hoisted(() => {
   return state;
 });
 
+vi.mock('./session-window.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('./state.js', () => ({
   appState: mockAppState,
 }));
@@ -190,7 +191,8 @@ describe('notification-desktop', () => {
     notificationInstances[0].onclick!();
 
     expect(focusSpy).toHaveBeenCalled();
-    expect(mockAppState.setActiveProject).toHaveBeenCalledWith('proj-1');
+    // Through revealSession: proj-1 is already the active project, so only the tab switches.
+    expect(mockAppState.setActiveProject).not.toHaveBeenCalled();
     expect(mockAppState.setActiveSession).toHaveBeenCalledWith('proj-1', 'bg-session');
   });
 

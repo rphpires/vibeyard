@@ -17,48 +17,88 @@ import { DomSearchBackend } from './components/dom-search-backend.js';
 import { toggleInspector } from './components/session-inspector.js';
 import { zoomIn, zoomOut, zoomReset } from './zoom.js';
 import { getBrowserTabInstance } from './components/browser-tab/instance.js';
+import { getDetachedProjectId, runWithCommandSource } from './session-window-state.js';
+import {
+  commandTargetDoc,
+  commandTargetProjectId,
+  commandTargetSession,
+  commandTargetView,
+  runInMainWindow,
+  type CommandSource,
+} from './reveal.js';
 
 export function initKeybindings(): void {
-  const handleCloseSession = () => {
-    const project = appState.activeProject;
-    const session = appState.activeSession;
-    if (project && session) closeTab(project.id, session.id);
+  // Session commands act on the window they came from: a native-menu click carries its
+  // window as `source`; a key press has none and goes by which window has focus (the
+  // sessions window forwards its keydown here). See reveal.ts.
+  const target = (source?: CommandSource) => ({
+    projectId: commandTargetProjectId(source),
+    view: commandTargetView(source),
+  });
+  const newSession = (source?: CommandSource): void => {
+    const projectId = commandTargetProjectId(source);
+    if (projectId) quickNewSession(projectId, commandTargetDoc(source));
   };
+  const closeSession = (source?: CommandSource): void => {
+    const projectId = commandTargetProjectId(source);
+    const session = commandTargetSession(source);
+    if (projectId && session) closeTab(projectId, session.id);
+  };
+  const cycle = (direction: 1 | -1, source?: CommandSource): void => {
+    const { projectId, view } = target(source);
+    if (projectId) appState.cycleSession(direction, projectId, view);
+  };
+  const gotoIndex = (index: number, source?: CommandSource): void => {
+    const { projectId, view } = target(source);
+    if (projectId) appState.gotoSession(index, projectId, view);
+  };
+  const toggleSwarm = (source?: CommandSource): void => {
+    const { projectId, view } = target(source);
+    // The main view of the detached project is always tabs: that layout is the sessions window's.
+    if (!projectId || (view === 'main' && projectId === getDetachedProjectId())) return;
+    appState.toggleSwarm(projectId);
+  };
+  // The session inspector panel lives in the main window only.
+  const inspector = (source?: CommandSource): void => {
+    if (commandTargetView(source) === 'sessions') return;
+    const session = commandTargetSession(source);
+    if (session) toggleInspector(session.id);
+  };
+  /** A main-window-only command: run it there, bringing that window forward if needed. */
+  const inMain = (fn: () => void) => (source?: CommandSource): void => runInMainWindow(fn, source);
 
   // Menu IPC listeners — handle clicks on Electron menu items.
   // Accelerators are display-only (registerAccelerator: false), so these
   // only fire on actual menu clicks, not keyboard shortcuts.
-  // Each callback also receives a trailing `source` ('main' | 'sessions', the
-  // window the click came from); ignored for now.
-  window.vibeyard.menu.onNewProject(() => promptNewProject());
-  window.vibeyard.menu.onNewSession(() => quickNewSession());
-  window.vibeyard.menu.onToggleSplit(() => appState.toggleSwarm());
-  window.vibeyard.menu.onNextSession(() => appState.cycleSession(1));
-  window.vibeyard.menu.onPrevSession(() => appState.cycleSession(-1));
-  window.vibeyard.menu.onGotoSession((index) => appState.gotoSession(index));
-  window.vibeyard.menu.onToggleDebug(() => toggleDebugPanel());
-  window.vibeyard.menu.onToggleInspector(() => toggleInspector());
-  window.vibeyard.menu.onCloseSession(() => handleCloseSession());
+  window.vibeyard.menu.onNewProject(inMain(promptNewProject));
+  window.vibeyard.menu.onNewSession((source) => newSession(source));
+  window.vibeyard.menu.onToggleSplit((source) => toggleSwarm(source));
+  window.vibeyard.menu.onNextSession((source) => cycle(1, source));
+  window.vibeyard.menu.onPrevSession((source) => cycle(-1, source));
+  window.vibeyard.menu.onGotoSession((index, source) => gotoIndex(index, source));
+  window.vibeyard.menu.onToggleDebug(inMain(toggleDebugPanel));
+  window.vibeyard.menu.onToggleInspector((source) => inspector(source));
+  window.vibeyard.menu.onCloseSession((source) => closeSession(source));
 
   // Register shortcut handlers — the single authority for keyboard shortcuts.
-  shortcutManager.registerHandler('new-session', quickNewSession);
-  shortcutManager.registerHandler('new-session-alt', quickNewSession);
-  shortcutManager.registerHandler('new-project', promptNewProject);
+  shortcutManager.registerHandler('new-session', () => newSession());
+  shortcutManager.registerHandler('new-session-alt', () => newSession());
+  shortcutManager.registerHandler('new-project', () => inMain(promptNewProject)());
   for (let i = 1; i <= 9; i++) {
-    shortcutManager.registerHandler(`goto-session-${i}`, () => appState.gotoSession(i - 1));
+    shortcutManager.registerHandler(`goto-session-${i}`, () => gotoIndex(i - 1));
   }
-  shortcutManager.registerHandler('next-session', () => appState.cycleSession(1));
-  shortcutManager.registerHandler('prev-session', () => appState.cycleSession(-1));
+  shortcutManager.registerHandler('next-session', () => cycle(1));
+  shortcutManager.registerHandler('prev-session', () => cycle(-1));
   shortcutManager.registerHandler('tab-back', () => appState.navigateBack());
   shortcutManager.registerHandler('tab-forward', () => appState.navigateForward());
-  shortcutManager.registerHandler('toggle-sidebar', toggleSidebar);
-  shortcutManager.registerHandler('toggle-split', () => appState.toggleSwarm());
-  shortcutManager.registerHandler('project-terminal', toggleProjectTerminal);
-  shortcutManager.registerHandler('project-terminal-alt', toggleProjectTerminal);
-  shortcutManager.registerHandler('debug-panel', toggleDebugPanel);
-  shortcutManager.registerHandler('git-panel', toggleGitPanel);
-  shortcutManager.registerHandler('quick-open', showQuickOpen);
-  shortcutManager.registerHandler('session-search', showSessionSearchPalette);
+  shortcutManager.registerHandler('toggle-sidebar', () => inMain(toggleSidebar)());
+  shortcutManager.registerHandler('toggle-split', () => toggleSwarm());
+  shortcutManager.registerHandler('project-terminal', () => inMain(toggleProjectTerminal)());
+  shortcutManager.registerHandler('project-terminal-alt', () => inMain(toggleProjectTerminal)());
+  shortcutManager.registerHandler('debug-panel', () => inMain(toggleDebugPanel)());
+  shortcutManager.registerHandler('git-panel', () => inMain(toggleGitPanel)());
+  shortcutManager.registerHandler('quick-open', () => inMain(showQuickOpen)());
+  shortcutManager.registerHandler('session-search', () => inMain(showSessionSearchPalette)());
   shortcutManager.registerHandler('find-in-terminal', () => {
     const shellPanel = document.getElementById('project-terminal-panel');
     if (shellPanel && !shellPanel.classList.contains('hidden') &&
@@ -70,7 +110,7 @@ export function initKeybindings(): void {
       }
     }
 
-    const session = appState.activeSession;
+    const session = commandTargetSession();
     if (!session) return;
 
     if (session.type === 'file-reader') {
@@ -91,29 +131,29 @@ export function initKeybindings(): void {
     }
   });
   shortcutManager.registerHandler('goto-line', () => {
-    const session = appState.activeSession;
+    const session = commandTargetSession();
     if (session?.type === 'file-reader') {
       showGoToLineBar(session.id);
     }
   });
-  shortcutManager.registerHandler('help', () => showPreferencesModal('help'));
-  shortcutManager.registerHandler('close-session', handleCloseSession);
-  shortcutManager.registerHandler('toggle-inspector', toggleInspector);
+  shortcutManager.registerHandler('help', () => inMain(() => showPreferencesModal('help'))());
+  shortcutManager.registerHandler('close-session', () => closeSession());
+  shortcutManager.registerHandler('toggle-inspector', () => inspector());
   shortcutManager.registerHandler('zoom-in', zoomIn);
   shortcutManager.registerHandler('zoom-out', zoomOut);
   shortcutManager.registerHandler('zoom-reset', zoomReset);
   shortcutManager.registerHandler('browser-reload', () => {
-    const session = appState.activeSession;
+    const session = commandTargetSession();
     if (session?.type !== 'browser-tab') return;
     getBrowserTabInstance(session.id)?.webview.reload();
   });
   shortcutManager.registerHandler('browser-hard-reload', () => {
-    const session = appState.activeSession;
+    const session = commandTargetSession();
     if (session?.type !== 'browser-tab') return;
     getBrowserTabInstance(session.id)?.webview.reloadIgnoringCache();
   });
 
   document.addEventListener('keydown', (e) => {
-    shortcutManager.matchEvent(e);
+    runWithCommandSource('main', () => { shortcutManager.matchEvent(e); });
   });
 }

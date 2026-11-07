@@ -3,6 +3,7 @@ import { getProviderDisplayName } from '../provider-availability.js';
 import { escapeHtml, escapeRegExp } from './dom-search-backend.js';
 import { deriveProjectName } from '../../shared/project-name.js';
 import type { DeepSearchResult } from '../../shared/types.js';
+import { revealSession } from '../reveal.js';
 
 interface ResolvedResult extends DeepSearchResult {
   sessionName: string | null;
@@ -240,8 +241,7 @@ function updateActiveItem(): void {
 
 function openResult(r: ResolvedResult): void {
   if (r.projectId && r.activeSessionId) {
-    appState.setActiveProject(r.projectId);
-    appState.setActiveSession(r.projectId, r.activeSessionId);
+    revealSession(r.projectId, r.activeSessionId);
   } else if (r.projectId && r.archivedId) {
     appState.setActiveProject(r.projectId);
     void appState.resumeFromHistorySafe(r.projectId, r.archivedId);

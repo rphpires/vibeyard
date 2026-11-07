@@ -49,7 +49,9 @@ vi.mock('../join-dialog.js', () => ({ showJoinDialog: vi.fn() }));
 vi.mock('../path-autocomplete.js', () => ({ attachPathAutocomplete: vi.fn(() => ({ refresh: vi.fn() })) }));
 vi.mock('../../run-location.js', () => ({ resolveRunLocation: vi.fn() }));
 
-import { setDetachedProjectId, _resetForTesting as resetDetached } from '../../session-window-state.js';
+import { setDetachedProjectId, setMainViewSelection, _resetForTesting as resetDetached } from '../../session-window-state.js';
+import { showShareDialog } from '../share-dialog.js';
+import { showJoinDialog } from '../join-dialog.js';
 import { renderTabList, render } from './tab-list.js';
 import { createTabBarView, destroyTabBarView, buildTabBarDom, type TabBarView } from './index.js';
 import { quickNewSession, promptNewSession } from './session-menu.js';
@@ -261,5 +263,70 @@ describe('menus and drag in a view', () => {
     Object.defineProperty(drop, 'dataTransfer', { value: { getData: () => 'kb' } });
     target.dispatchEvent(drop);
     expect(fakeState.reorderSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('the active tab of each view', () => {
+  const activeIds = (v: TabBarView): string[] =>
+    Array.from(v.tabListEl.querySelectorAll<HTMLElement>('.tab-item.active')).map((t) => t.dataset.sessionId!);
+
+  it('with B detached and active: main highlights its own selection, sessions highlights activeSessionId', () => {
+    setDetachedProjectId('B');
+    fakeState.projects[1].activeSessionId = 'cli1';
+    const main = view('main');
+    const sessions = view('sessions');
+    render();
+    expect(activeIds(main)).toEqual([]);
+    expect(activeIds(sessions)).toEqual(['cli1']);
+    setMainViewSelection('kb');
+    render();
+    expect(activeIds(main)).toEqual(['kb']);
+    expect(activeIds(sessions)).toEqual(['cli1']);
+  });
+
+  it('clicking a main-view tab of the detached project selects it even when activeSessionId already points at it', () => {
+    setDetachedProjectId('B');
+    fakeState.projects[1].activeSessionId = 'kb';
+    const main = view('main');
+    renderTabList(main);
+    main.tabListEl.querySelector<HTMLElement>('[data-session-id="kb"]')!.click();
+    expect(fakeState.setActiveSession).toHaveBeenCalledWith('B', 'kb');
+  });
+});
+
+describe('menu actions follow the view', () => {
+  it('More → swarm toggles the sessions view project, not the active one', () => {
+    setDetachedProjectId('B');
+    fakeState.activeProjectId = 'A';
+    const other = document.implementation.createHTMLDocument('sessions');
+    const sessions = view('sessions', other);
+    sessions.root.querySelector<HTMLElement>('#btn-more')!.click();
+    Array.from(getActiveContextMenu()!.querySelectorAll<HTMLElement>('.tab-context-menu-item'))[0].click();
+    expect(fakeState.toggleSwarm).toHaveBeenCalledWith('B');
+  });
+
+  it('More → join opens the dialog in the view document, for its project', () => {
+    setDetachedProjectId('B');
+    fakeState.activeProjectId = 'A';
+    const other = document.implementation.createHTMLDocument('sessions');
+    const sessions = view('sessions', other);
+    sessions.root.querySelector<HTMLElement>('#btn-more')!.click();
+    const items = Array.from(getActiveContextMenu()!.querySelectorAll<HTMLElement>('.tab-context-menu-item'));
+    items[items.length - 1].click();
+    expect(showJoinDialog).toHaveBeenCalledWith({ projectId: 'B', doc: other });
+  });
+
+  it('tab menu → share opens the share dialog in the view document', () => {
+    setDetachedProjectId('B');
+    const other = document.implementation.createHTMLDocument('sessions');
+    const sessions = view('sessions', other);
+    renderTabList(sessions);
+    const tab = sessions.tabListEl.querySelector<HTMLElement>('[data-session-id="cli1"]')!;
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    const share = Array.from(getActiveContextMenu()!.querySelectorAll<HTMLElement>('.tab-context-menu-item'))
+      .find((el) => /share/i.test(el.textContent ?? '') && !/stop/i.test(el.textContent ?? ''));
+    expect(share).toBeDefined();
+    share!.click();
+    expect(showShareDialog).toHaveBeenCalledWith('cli1', other);
   });
 });

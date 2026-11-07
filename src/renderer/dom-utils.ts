@@ -34,8 +34,8 @@ export function createPlanModeRow(labelText: string = 'Plan mode', checked = tru
 }
 
 /** Create a numeric PIN input field (4–8 digits). */
-export function createPinInput(): HTMLInputElement {
-  const input = document.createElement('input');
+export function createPinInput(doc: Document = document): HTMLInputElement {
+  const input = doc.createElement('input');
   input.type = 'text';
   input.inputMode = 'numeric';
   input.className = 'share-pin-input';

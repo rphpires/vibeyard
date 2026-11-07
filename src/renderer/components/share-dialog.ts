@@ -11,51 +11,52 @@ let activeOverlay: HTMLElement | null = null;
 let activeDismiss: (() => void) | null = null;
 let pendingShareSessionId: string | null = null;
 
-export function showShareDialog(sessionId: string): void {
+/** Open the share dialog in `doc` (default: the main window; the sessions window passes its own). */
+export function showShareDialog(sessionId: string, doc: Document = document): void {
   closeShareDialog();
 
-  const overlay = document.createElement('div');
+  const overlay = doc.createElement('div');
   overlay.className = 'share-overlay';
   activeOverlay = overlay;
 
-  const dialog = document.createElement('div');
+  const dialog = doc.createElement('div');
   dialog.className = 'share-dialog';
 
   let selectedMode: ShareMode = 'readonly';
 
   // Title
-  const title = document.createElement('h3');
+  const title = doc.createElement('h3');
   title.textContent = 'Share Session';
   dialog.appendChild(title);
 
   // ── Phase 1: Permission + Disclaimers ──
 
-  const phase1 = document.createElement('div');
+  const phase1 = doc.createElement('div');
   phase1.className = 'share-phase';
 
-  const notice = document.createElement('div');
+  const notice = doc.createElement('div');
   notice.className = 'share-notice';
   notice.textContent = 'Your full terminal scrollback history will be shared with the peer.';
   phase1.appendChild(notice);
 
-  const rwWarning = document.createElement('div');
+  const rwWarning = doc.createElement('div');
   rwWarning.className = 'share-notice hidden';
   rwWarning.textContent = 'Read-write mode allows the peer to type into your terminal and execute commands. Only share with people you trust.';
   phase1.appendChild(rwWarning);
 
-  const modeSection = document.createElement('div');
+  const modeSection = doc.createElement('div');
   modeSection.className = 'share-section';
 
-  const modeLabel = document.createElement('div');
+  const modeLabel = doc.createElement('div');
   modeLabel.className = 'share-label';
   modeLabel.textContent = 'Access level';
   modeSection.appendChild(modeLabel);
 
-  const modeGroup = document.createElement('div');
+  const modeGroup = doc.createElement('div');
   modeGroup.className = 'share-radio-group';
 
-  const readonlyRadio = createRadio('share-mode', 'readonly', 'Read-only', true);
-  const readwriteRadio = createRadio('share-mode', 'readwrite', 'Read-write', false);
+  const readonlyRadio = createRadio(doc, 'share-mode', 'readonly', 'Read-only', true);
+  const readwriteRadio = createRadio(doc, 'share-mode', 'readwrite', 'Read-write', false);
   modeGroup.appendChild(readonlyRadio);
   modeGroup.appendChild(readwriteRadio);
   modeSection.appendChild(modeGroup);
@@ -71,41 +72,41 @@ export function showShareDialog(sessionId: string): void {
 
   // ── Phase 2: PIN + Codes ──
 
-  const phase2 = document.createElement('div');
+  const phase2 = doc.createElement('div');
   phase2.className = 'share-phase hidden';
 
-  const pinSection = document.createElement('div');
+  const pinSection = doc.createElement('div');
   pinSection.className = 'share-section';
 
-  const pinLabel = document.createElement('div');
+  const pinLabel = doc.createElement('div');
   pinLabel.className = 'share-label';
   pinLabel.textContent = 'Choose a PIN (4–8 digits) to share with your peer';
 
-  const pinInput = createPinInput();
+  const pinInput = createPinInput(doc);
   pinSection.appendChild(pinLabel);
   pinSection.appendChild(pinInput);
   phase2.appendChild(pinSection);
 
   // Offer code (hidden until generated)
-  const offerSection = document.createElement('div');
+  const offerSection = doc.createElement('div');
   offerSection.className = 'share-section hidden';
 
-  const offerLabel = document.createElement('div');
+  const offerLabel = doc.createElement('div');
   offerLabel.className = 'share-label';
   offerLabel.textContent = 'Send this code to your peer';
   offerSection.appendChild(offerLabel);
 
-  const offerTextarea = document.createElement('textarea');
+  const offerTextarea = doc.createElement('textarea');
   offerTextarea.className = 'share-code';
   offerTextarea.readOnly = true;
   offerTextarea.rows = 3;
   offerSection.appendChild(offerTextarea);
 
-  const copyOfferBtn = document.createElement('button');
+  const copyOfferBtn = doc.createElement('button');
   copyOfferBtn.className = 'btn-secondary share-btn';
   copyOfferBtn.textContent = 'Copy Code';
   copyOfferBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(offerTextarea.value);
+    (doc.defaultView ?? window).navigator.clipboard.writeText(offerTextarea.value);
     copyOfferBtn.textContent = 'Copied!';
     setTimeout(() => { copyOfferBtn.textContent = 'Copy Code'; }, 1500);
   });
@@ -113,15 +114,15 @@ export function showShareDialog(sessionId: string): void {
   phase2.appendChild(offerSection);
 
   // Answer code (hidden until offer generated)
-  const answerSection = document.createElement('div');
+  const answerSection = doc.createElement('div');
   answerSection.className = 'share-section hidden';
 
-  const answerLabel = document.createElement('div');
+  const answerLabel = doc.createElement('div');
   answerLabel.className = 'share-label';
   answerLabel.textContent = 'Paste your peer\'s response code';
   answerSection.appendChild(answerLabel);
 
-  const answerTextarea = document.createElement('textarea');
+  const answerTextarea = doc.createElement('textarea');
   answerTextarea.className = 'share-code';
   answerTextarea.rows = 3;
   answerTextarea.placeholder = 'Paste response code here...';
@@ -131,33 +132,33 @@ export function showShareDialog(sessionId: string): void {
   dialog.appendChild(phase2);
 
   // Status area
-  const statusEl = document.createElement('div');
+  const statusEl = doc.createElement('div');
   statusEl.className = 'share-status';
   dialog.appendChild(statusEl);
 
   // ── Action buttons (always at bottom) ──
 
-  const actions = document.createElement('div');
+  const actions = doc.createElement('div');
   actions.className = 'share-actions';
 
-  const closeBtn = document.createElement('button');
+  const closeBtn = doc.createElement('button');
   closeBtn.className = 'btn-secondary share-btn';
   closeBtn.textContent = 'Cancel';
   closeBtn.addEventListener('click', closeShareDialog);
 
-  const backBtn = document.createElement('button');
+  const backBtn = doc.createElement('button');
   backBtn.className = 'btn-secondary share-btn hidden';
   backBtn.textContent = 'Back';
 
-  const nextBtn = document.createElement('button');
+  const nextBtn = doc.createElement('button');
   nextBtn.className = 'btn-primary share-btn';
   nextBtn.textContent = 'Next';
 
-  const startBtn = document.createElement('button');
+  const startBtn = doc.createElement('button');
   startBtn.className = 'btn-primary share-btn hidden';
   startBtn.textContent = 'Start Sharing';
 
-  const connectBtn = document.createElement('button');
+  const connectBtn = doc.createElement('button');
   connectBtn.className = 'btn-primary share-btn hidden';
   connectBtn.textContent = 'Connect';
   connectBtn.disabled = true;
@@ -170,7 +171,7 @@ export function showShareDialog(sessionId: string): void {
   dialog.appendChild(actions);
 
   overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
+  doc.body.appendChild(overlay);
 
   // ── Phase navigation ──
 
@@ -283,15 +284,15 @@ export function closeShareDialog(): void {
   pendingShareSessionId = null;
 }
 
-function createRadio(name: string, value: string, labelText: string, checked: boolean): HTMLElement {
-  const wrapper = document.createElement('label');
+function createRadio(doc: Document, name: string, value: string, labelText: string, checked: boolean): HTMLElement {
+  const wrapper = doc.createElement('label');
   wrapper.className = 'share-radio-label';
-  const input = document.createElement('input');
+  const input = doc.createElement('input');
   input.type = 'radio';
   input.name = name;
   input.value = value;
   input.checked = checked;
-  const span = document.createElement('span');
+  const span = doc.createElement('span');
   span.textContent = labelText;
   wrapper.appendChild(input);
   wrapper.appendChild(span);

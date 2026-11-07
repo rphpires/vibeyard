@@ -18,3 +18,10 @@
 .session-window-return {
   white-space: nowrap;
 }
+
+/* Main window: the detached project's sessions are in the sessions window. */
+.session-window-placeholder-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}

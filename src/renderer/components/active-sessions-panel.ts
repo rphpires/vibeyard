@@ -6,6 +6,7 @@ import { isCliSession } from '../session-utils.js';
 import { esc } from '../dom-utils.js';
 import { t } from '../i18n.js';
 import { closeSessionWithConfirm } from '../session-close.js';
+import { revealSession } from '../reveal.js';
 import { isUnread, onChange as onUnreadChange } from '../session-unread.js';
 
 export interface ActiveSessionRow {
@@ -171,9 +172,9 @@ export function initActiveSessions(): void {
       closeSessionWithConfirm(projectId, sessionId);
       return;
     }
-    // Activating a detached session gives it its tab back (setActiveSession).
-    appState.setActiveProject(projectId);
-    appState.setActiveSession(projectId, sessionId);
+    // Activating a detached session gives it its tab back (setActiveSession); a session
+    // of the project in the sessions window is shown there, that window brought forward.
+    revealSession(projectId, sessionId);
   });
 
   onActivityChange(scheduleRender);

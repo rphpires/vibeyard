@@ -7,12 +7,22 @@ import { getProviderCapabilities } from './provider-availability.js';
 import { handleCtlCommand, type CtlHandlerDeps } from './ctl-handler.js';
 import { ctlError, type CtlResult } from '../shared/ctl-protocol.js';
 import type { ProviderId } from '../shared/types.js';
+import { getDetachedProjectId } from './session-window-state.js';
+import { focusSessionWindow } from './session-window.js';
+import { docForSession } from './reveal.js';
 
 const deps: CtlHandlerDeps = {
   projects: () => appState.projects,
-  addExternalSession: (projectId, opts) => appState.addExternalSession(projectId, opts),
+  addExternalSession: (projectId, opts) => {
+    const session = appState.addExternalSession(projectId, opts);
+    // --focus into the detached project keeps the main window where it is and brings
+    // the sessions window forward instead (addExternalSession made the tab active there).
+    if (session && opts.focus && projectId === getDetachedProjectId()) focusSessionWindow();
+    return session;
+  },
   renameSession: (projectId, sessionId, name, userRenamed) => appState.renameSession(projectId, sessionId, name, userRenamed),
-  closeSessionWithConfirm,
+  // The "still active" dialog opens in the window that shows the session.
+  closeSessionWithConfirm: (projectId, sessionId) => closeSessionWithConfirm(projectId, sessionId, docForSession(projectId, sessionId)),
   needsCloseConfirmation,
   hookStatus: (id) => getStatus(id),
   terminalState: (id) => {

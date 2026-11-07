@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
+vi.mock('../session-window.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('../state.js', () => ({ appState: {} }));
 
 import { highlightMatches } from './session-search-palette.js';

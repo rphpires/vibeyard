@@ -9,42 +9,50 @@ import { bindModalDismiss } from './modal-manager.js';
 let activeOverlay: HTMLElement | null = null;
 let activeDismiss: (() => void) | null = null;
 
-export function showJoinDialog(): void {
+export interface JoinDialogOptions {
+  /** Project the remote session joins (default: the active project). */
+  projectId?: string;
+  /** Document to open the dialog in (default: the main window's). */
+  doc?: Document;
+}
+
+export function showJoinDialog(opts: JoinDialogOptions = {}): void {
   closeJoinDialog();
 
-  const project = appState.activeProject;
+  const doc = opts.doc ?? document;
+  const project = opts.projectId ? appState.projects.find((p) => p.id === opts.projectId) : appState.activeProject;
   if (!project) return;
 
-  const overlay = document.createElement('div');
+  const overlay = doc.createElement('div');
   overlay.className = 'share-overlay';
   activeOverlay = overlay;
 
-  const dialog = document.createElement('div');
+  const dialog = doc.createElement('div');
   dialog.className = 'share-dialog';
 
   // Title
-  const title = document.createElement('h3');
+  const title = doc.createElement('h3');
   title.textContent = 'Join Remote Session';
   dialog.appendChild(title);
 
   // Offer input section (PIN + code paste together)
-  const offerSection = document.createElement('div');
+  const offerSection = doc.createElement('div');
   offerSection.className = 'share-section';
 
-  const pinLabel = document.createElement('div');
+  const pinLabel = doc.createElement('div');
   pinLabel.className = 'share-label';
   pinLabel.textContent = 'Enter the PIN from the host';
   offerSection.appendChild(pinLabel);
 
-  const pinInput = createPinInput();
+  const pinInput = createPinInput(doc);
   offerSection.appendChild(pinInput);
 
-  const offerLabel = document.createElement('div');
+  const offerLabel = doc.createElement('div');
   offerLabel.className = 'share-label share-label-spaced';
   offerLabel.textContent = 'Paste the host\'s connection code';
   offerSection.appendChild(offerLabel);
 
-  const offerTextarea = document.createElement('textarea');
+  const offerTextarea = doc.createElement('textarea');
   offerTextarea.className = 'share-code';
   offerTextarea.rows = 3;
   offerTextarea.placeholder = 'Paste connection code here...';
@@ -52,30 +60,30 @@ export function showJoinDialog(): void {
   dialog.appendChild(offerSection);
 
   // Status area
-  const statusEl = document.createElement('div');
+  const statusEl = doc.createElement('div');
   statusEl.className = 'share-status';
   dialog.appendChild(statusEl);
 
   // Answer section (hidden initially)
-  const answerSection = document.createElement('div');
+  const answerSection = doc.createElement('div');
   answerSection.className = 'share-section hidden';
 
-  const answerLabel = document.createElement('div');
+  const answerLabel = doc.createElement('div');
   answerLabel.className = 'share-label';
   answerLabel.textContent = 'Send this response code back to the host';
   answerSection.appendChild(answerLabel);
 
-  const answerTextarea = document.createElement('textarea');
+  const answerTextarea = doc.createElement('textarea');
   answerTextarea.className = 'share-code';
   answerTextarea.readOnly = true;
   answerTextarea.rows = 3;
   answerSection.appendChild(answerTextarea);
 
-  const copyAnswerBtn = document.createElement('button');
+  const copyAnswerBtn = doc.createElement('button');
   copyAnswerBtn.className = 'btn-secondary share-btn';
   copyAnswerBtn.textContent = 'Copy Response';
   copyAnswerBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(answerTextarea.value);
+    (doc.defaultView ?? window).navigator.clipboard.writeText(answerTextarea.value);
     copyAnswerBtn.textContent = 'Copied!';
     setTimeout(() => { copyAnswerBtn.textContent = 'Copy Response'; }, 1500);
   });
@@ -83,14 +91,14 @@ export function showJoinDialog(): void {
   dialog.appendChild(answerSection);
 
   // Action buttons
-  const actions = document.createElement('div');
+  const actions = doc.createElement('div');
   actions.className = 'share-actions';
 
-  const joinBtn = document.createElement('button');
+  const joinBtn = doc.createElement('button');
   joinBtn.className = 'btn-primary share-btn';
   joinBtn.textContent = 'Join';
 
-  const closeBtn = document.createElement('button');
+  const closeBtn = doc.createElement('button');
   closeBtn.className = 'btn-secondary share-btn';
   closeBtn.textContent = 'Cancel';
   closeBtn.addEventListener('click', closeJoinDialog);
@@ -100,7 +108,7 @@ export function showJoinDialog(): void {
   dialog.appendChild(actions);
 
   overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
+  doc.body.appendChild(overlay);
 
   // ESC + overlay background click close the dialog (capture-phase ESC so it
   // works over a focused terminal and never leaks to the PTY).

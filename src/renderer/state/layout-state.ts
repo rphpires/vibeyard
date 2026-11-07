@@ -20,14 +20,18 @@ export function toggleSwarmMode(project: ProjectRecord, tabs: SessionRecord[] = 
   }
 }
 
-/** Compute the next session id to activate when cycling within `tabs`. Returns null if there are none. */
+/**
+ * Compute the next session id to activate when cycling within `tabs`, from `currentId`
+ * (default: the project's active tab). Returns null if there are none.
+ */
 export function cycleSessionId(
   project: ProjectRecord,
   direction: 1 | -1,
   tabs: SessionRecord[] = tabSessions(project),
+  currentId: string | null = project.activeSessionId,
 ): string | null {
   if (tabs.length === 0) return null;
-  const idx = tabs.findIndex((s) => s.id === project.activeSessionId);
+  const idx = tabs.findIndex((s) => s.id === currentId);
   const next = (idx + direction + tabs.length) % tabs.length;
   return tabs[next].id;
 }

@@ -81,6 +81,7 @@ const openSpy = vi.fn((_url?: string, _name?: string) => newChildWindow());
 window.open = openSpy as unknown as typeof window.open;
 
 const windowState = await import('./session-window-state.js');
+const { currentCommandSource } = windowState;
 const sw = await import('./session-window.js');
 sw.initSessionWindow();
 
@@ -241,8 +242,16 @@ describe('session window controller', () => {
     sw.openSessionWindow('B');
     const doc = childWin().document;
     const e = new (childWin() as unknown as typeof globalThis).KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true });
+    let sourceDuringMatch: string | null = 'unset';
+    vi.mocked(shortcuts.shortcutManager.matchEvent).mockImplementationOnce(() => {
+      sourceDuringMatch = currentCommandSource();
+      return true;
+    });
     doc.body.dispatchEvent(e);
     expect(shortcuts.shortcutManager.matchEvent).toHaveBeenCalledWith(e);
+    // The shortcut runs knowing it came from the sessions window, whatever has OS focus.
+    expect(sourceDuringMatch).toBe('sessions');
+    expect(currentCommandSource()).toBeNull();
   });
 
   it('treats a closed child as gone and opens a fresh one', () => {

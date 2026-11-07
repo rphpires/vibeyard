@@ -62,7 +62,7 @@ export function createTabBarView(kind: ViewKind, root: HTMLElement): TabBarView 
 
   btnAddSession?.addEventListener('click', () => {
     const project = viewProject(view);
-    if (project) quickNewSession(project.id);
+    if (project) quickNewSession(project.id, doc);
   });
   btnAddSession?.addEventListener('contextmenu', (e) => {
     e.preventDefault();

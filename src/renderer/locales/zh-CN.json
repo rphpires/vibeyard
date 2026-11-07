@@ -538,6 +538,9 @@
     "appearance": "外观"
   },
   "sessionWindow": {
-    "returnToMain": "返回主窗口"
+    "returnToMain": "返回主窗口",
+    "placeholder": "此项目的会话已在另一个窗口中打开",
+    "show": "显示",
+    "bringBack": "移回"
   }
 }

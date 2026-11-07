@@ -17,7 +17,7 @@
  */
 import { appState } from './state.js';
 import { SESSION_WINDOW_FRAME } from '../shared/session-window.js';
-import { getDetachedProjectId, setDetachedProjectId } from './session-window-state.js';
+import { getDetachedProjectId, runWithCommandSource, setDetachedProjectId, setMainViewSelection } from './session-window-state.js';
 import {
   createLayoutView,
   destroyLayoutView,
@@ -116,7 +116,10 @@ function build(win: Window): OpenWindow {
   const scheduleFit = (): void => {
     win.requestAnimationFrame(() => { if (isAlive(w)) fitAllVisible(doc); });
   };
-  const onKeydown = (e: KeyboardEvent): void => { shortcutManager.matchEvent(e); };
+  // Shortcuts pressed here act on this window's project (see reveal.ts).
+  const onKeydown = (e: KeyboardEvent): void => {
+    runWithCommandSource('sessions', () => { shortcutManager.matchEvent(e); });
+  };
   // Panes must be out before the document dies (see module docstring).
   const onPagehide = (): void => { if (current === w) teardown(); };
   win.addEventListener('resize', scheduleFit);
@@ -144,6 +147,16 @@ function build(win: Window): OpenWindow {
 }
 
 /**
+ * Mark `projectId` detached. If its active tab is one the main window keeps (Overview,
+ * Kanban, Team), the main view goes on showing it: its selection starts there.
+ */
+function detach(projectId: string): void {
+  setDetachedProjectId(projectId);
+  const project = appState.projects.find((p) => p.id === projectId);
+  setMainViewSelection(project?.activeSessionId ?? null);
+}
+
+/**
  * Show `projectId`'s sessions in the sessions window, opening it if needed. With the
  * window already open on another project, that project's panes go back to the main
  * window (hidden) and this one's move in.
@@ -156,7 +169,7 @@ export function openSessionWindow(projectId: string): void {
   if (current) {
     if (getDetachedProjectId() !== projectId) {
       evacuateLayoutView(current.layout, mainContainer());
-      setDetachedProjectId(projectId);
+      detach(projectId);
       renderLayout();
       renderTabBars();
     }
@@ -175,7 +188,7 @@ export function openSessionWindow(projectId: string): void {
   }
 
   current = build(win);
-  setDetachedProjectId(projectId);
+  detach(projectId);
   renderLayout();
   renderTabBars();
   updateTitle();
@@ -200,6 +213,11 @@ export function isSessionWindowFocused(): boolean {
   } catch {
     return false;
   }
+}
+
+/** The sessions window's document while it is open. */
+export function getSessionWindowDocument(): Document | null {
+  return current && isAlive(current) ? current.doc : null;
 }
 
 export function isSessionWindowOpen(): boolean {

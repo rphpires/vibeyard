@@ -11,7 +11,7 @@ import { openInspector, isInspectorOpen, getInspectedSessionId, closeInspector }
 import { hasMultipleAvailableProviders, getProviderCapabilities } from '../../provider-availability.js';
 import { buildResumeWithProviderItems } from '../resume-with-provider-menu.js';
 import { isCliSession } from '../../session-utils.js';
-import { viewTabs } from '../../session-window-state.js';
+import { viewActiveSessionId, viewTabs } from '../../session-window-state.js';
 import { viewReorderIndex } from '../../state/layout-state.js';
 import { esc } from '../../dom-utils.js';
 import { closeTab, closeTabsByMode } from '../../session-close.js';
@@ -194,7 +194,7 @@ export function showTabContextMenu(
     shareItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      showShareDialog(session.id);
+      showShareDialog(session.id, doc);
     });
   }
 
@@ -324,11 +324,13 @@ export function renderTabList(view: TabBarView): void {
   const project = viewProject(view);
   if (!project) return;
   const tabs = viewTabs(view.kind, project);
+  // This view's own active tab (the main view of a detached project keeps its own).
+  const activeId = viewActiveSessionId(view.kind, project);
 
   let activeTab: HTMLElement | null = null;
   for (const session of tabs) {
     const tab = view.doc.createElement('div');
-    const isActive = session.id === project.activeSessionId;
+    const isActive = session.id === activeId;
     const isMcp = session.type === 'mcp-inspector';
     const isDiff = session.type === 'diff-viewer';
     const isFileReader = session.type === 'file-reader';
@@ -361,7 +363,7 @@ export function renderTabList(view: TabBarView): void {
     tab.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).classList.contains('tab-close')) return;
       if (tab.querySelector('.tab-name input')) return;
-      if (session.id !== project.activeSessionId) {
+      if (session.id !== viewActiveSessionId(view.kind, project)) {
         appState.setActiveSession(project.id, session.id);
       }
     });
@@ -435,7 +437,7 @@ export function renderTabList(view: TabBarView): void {
     tabListEl.appendChild(tab);
   }
 
-  const plan = planScroll(view.kind, project.id, project.activeSessionId);
+  const plan = planScroll(view.kind, project.id, activeId);
   // The rebuild above reset the scroll offset. Put this project's own offset back,
   // so neither a re-render the user didn't ask for nor a trip through another
   // project moves the strip from where they scrolled it.
@@ -447,7 +449,7 @@ export function renderTabList(view: TabBarView): void {
     const tab = activeTab.getBoundingClientRect();
     tabListEl.scrollLeft += scrollDelta(tab.left - strip.left, tab.right - strip.right);
   }
-  commitScroll(view.kind, project.id, project.activeSessionId, tabListEl.scrollLeft, plan.autoScroll);
+  commitScroll(view.kind, project.id, activeId, tabListEl.scrollLeft, plan.autoScroll);
 }
 
 // Surgically update a single tab's status dot + tooltip without a full re-render.

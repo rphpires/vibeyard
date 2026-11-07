@@ -21,6 +21,7 @@ function confirmAndClose(
   sessions: SessionRecord[],
   targetIds: string[],
   remove: () => void,
+  doc?: Document,
 ): void {
   if (!appState.preferences.confirmCloseWorkingSession) {
     remove();
@@ -41,15 +42,18 @@ function confirmAndClose(
     {
       confirmLabel: isSingle ? 'Close' : 'Close all',
       onConfirm: remove,
+      doc,
     },
   );
 }
 
-export function closeSessionWithConfirm(projectId: string, sessionId: string): void {
+/** End a session for good, asking first if it is still active; the dialog opens in `doc` (default: the main window). */
+export function closeSessionWithConfirm(projectId: string, sessionId: string, doc?: Document): void {
   confirmAndClose(
     projectSessions(projectId),
     [sessionId],
     () => appState.removeSession(projectId, sessionId),
+    doc,
   );
 }
 

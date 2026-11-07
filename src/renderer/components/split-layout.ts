@@ -95,10 +95,13 @@ import { shouldFocusPane, type PaneFocusMemo } from './pane-focus.js';
 import {
   getDetachedProjectId,
   projectIdForView,
+  viewActiveSessionId,
   viewShowsSession,
   viewTabs,
   type ViewKind,
 } from '../session-window-state.js';
+import { closeSessionWindow, focusSessionWindow } from '../session-window.js';
+import { t } from '../i18n.js';
 
 /**
  * One place sessions are laid out: the main window's `#terminal-container`, or the
@@ -425,6 +428,15 @@ export function renderView(view: LayoutView): void {
   // Detached sessions (tab closed, session kept) are never laid out.
   const tabs = project ? viewTabs(view.kind, project) : [];
 
+  // The main view of the detached project with none of its own tabs selected: its
+  // sessions run in the other window, so say so instead of "no sessions".
+  if (project && view.kind === 'main' && project.id === getDetachedProjectId() && !viewActiveSessionId('main', project)) {
+    hideViewPanes(view);
+    setContainerClass(view, '');
+    showDetachedPlaceholder(view);
+    return;
+  }
+
   if (!project || tabs.length === 0) {
     hideViewPanes(view);
     setContainerClass(view, '');
@@ -537,12 +549,12 @@ function renderTabMode({ view, project }: ViewRender): void {
   container.style.gridTemplateColumns = '';
   container.style.gridTemplateRows = '';
 
-  const activeId = project.activeSessionId;
+  // The view's own active tab: while the project is detached, the main view keeps a
+  // selection of its own and project.activeSessionId belongs to the sessions view.
+  const activeId = viewActiveSessionId(view.kind, project);
   if (!activeId) return;
 
   const activeSession = project.sessions.find(s => s.id === activeId);
-  // The other view owns this tab (only possible while the project is detached).
-  if (activeSession && !viewShowsSession(view.kind, project.id, activeSession)) return;
   if (activeSession && !isCliSession(activeSession)) {
     attachNonCliPane(activeSession, container, false);
     return;
@@ -676,7 +688,7 @@ function appendEmptyCells(view: LayoutView, count: number, target: HTMLElement):
     btn.className = 'swarm-empty-add-btn';
     btn.textContent = '+';
     btn.title = 'New session';
-    btn.addEventListener('click', () => quickNewSession(projectForView(view)?.id));
+    btn.addEventListener('click', () => quickNewSession(projectForView(view)?.id, view.doc));
 
     cell.appendChild(btn);
     target.appendChild(cell);
@@ -723,10 +735,37 @@ function showEmptyState(view: LayoutView, project: ProjectRecord | undefined): v
     cta.className = 'btn-primary empty-state-cta';
     cta.innerHTML = `${plusIcon}<span>Start a session</span>`;
     // The view's project, not the active one: in the sessions window they differ.
-    cta.addEventListener('click', () => quickNewSession(project.id));
+    cta.addEventListener('click', () => quickNewSession(project.id, doc));
 
     el.append(title, hint, cta);
   }
+  view.container.appendChild(el);
+}
+
+/** Main window, detached project: "its sessions are in the other window" + Show / Bring back. */
+function showDetachedPlaceholder(view: LayoutView): void {
+  removeEmptyState(view);
+  const doc = view.doc;
+  const el = doc.createElement('div');
+  el.className = 'empty-state session-window-placeholder';
+
+  const title = doc.createElement('div');
+  title.className = 'empty-state-title';
+  title.textContent = t('sessionWindow.placeholder');
+
+  const actions = doc.createElement('div');
+  actions.className = 'session-window-placeholder-actions';
+  const show = doc.createElement('button');
+  show.className = 'btn-primary';
+  show.textContent = t('sessionWindow.show');
+  show.addEventListener('click', () => focusSessionWindow());
+  const back = doc.createElement('button');
+  back.className = 'btn-secondary';
+  back.textContent = t('sessionWindow.bringBack');
+  back.addEventListener('click', () => closeSessionWindow());
+  actions.append(show, back);
+
+  el.append(title, actions);
   view.container.appendChild(el);
 }
 

@@ -18,13 +18,17 @@ function projectById(projectId?: string): ProjectRecord | undefined {
   return projectId ? appState.projects.find((p) => p.id === projectId) : appState.activeProject;
 }
 
-/** New session with default settings in `projectId` (default: the active project). */
-export function quickNewSession(projectId?: string): void {
+/**
+ * New session with default settings in `projectId` (default: the active project).
+ * `doc` is the document the action came from (default: the main window's): its
+ * focused element is released so the new pane can take focus, and a dialog opens there.
+ */
+export function quickNewSession(projectId?: string, doc: Document = document): void {
   const project = projectById(projectId);
   if (!project) return;
   // The Temporary project has no folder of its own: every session needs one picked.
-  if (project.temporary) { void promptNewSession(undefined, { projectId: project.id }); return; }
-  (document.activeElement as HTMLElement)?.blur?.();
+  if (project.temporary) { void promptNewSession(undefined, { projectId: project.id, doc }); return; }
+  (doc.activeElement as HTMLElement | null)?.blur?.();
   appState.addSession(project.id, defaultSessionName(project));
 }
 
@@ -61,11 +65,11 @@ export function showMoreMenu(x: number, y: number, view?: TabBarView): void {
   };
 
   const swarmActive = project?.layout.mode === 'swarm';
-  addItem(swarmActive ? t('tab.moreMenu.swarmLayoutActive') : t('tab.moreMenu.swarmLayout'), () => appState.toggleSwarm());
+  addItem(swarmActive ? t('tab.moreMenu.swarmLayoutActive') : t('tab.moreMenu.swarmLayout'), () => appState.toggleSwarm(project?.id));
   addItem(t('tab.moreMenu.mcpInspector'), () => { if (project) addMcpInspector(project.id); });
 
   addSeparator();
-  addItem(t('tab.moreMenu.joinRemoteSession'), () => showJoinDialog());
+  addItem(t('tab.moreMenu.joinRemoteSession'), () => showJoinDialog({ projectId: project?.id, doc }));
 
   doc.body.appendChild(menu);
   setActiveContextMenu(menu);

@@ -1,5 +1,6 @@
 import { appState } from './state.js';
 import { onChange, type SessionStatus } from './session-activity.js';
+import { revealSession } from './reveal.js';
 
 const previousStatus = new Map<string, SessionStatus>();
 
@@ -45,10 +46,7 @@ function showNotification(sessionId: string, status: SessionStatus): void {
     // renamed or moved, and capturing it would pin the whole ProjectRecord
     // alive for as long as this retained notification lives.
     const project = appState.findSessionWithProject(sessionId)?.project;
-    if (project) {
-      appState.setActiveProject(project.id);
-      appState.setActiveSession(project.id, sessionId);
-    }
+    if (project) revealSession(project.id, sessionId);
     notification.close(); // `onclose` evicts the map entry.
   };
 

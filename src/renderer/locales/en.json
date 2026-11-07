@@ -538,6 +538,9 @@
     "appearance": "Appearance"
   },
   "sessionWindow": {
-    "returnToMain": "Return to main window"
+    "returnToMain": "Return to main window",
+    "placeholder": "This project's sessions are open in another window",
+    "show": "Show",
+    "bringBack": "Bring back"
   }
 }
