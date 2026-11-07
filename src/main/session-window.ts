@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { SESSION_WINDOW_FRAME } from '../shared/session-window';
+import { currentState } from './store';
 
 export interface Bounds { x: number; y: number; width: number; height: number }
 
@@ -46,9 +47,12 @@ export function rememberSessionWindowZoom(factor: number): void {
   reportedZoom = factor;
 }
 
-/** The zoom a new sessions window opens at: the last reported one, else the persisted one. */
-export function sessionWindowZoom(persisted: number | undefined): number {
-  return reportedZoom ?? persisted ?? 1;
+/**
+ * The zoom a new sessions window opens at: the last reported one, else the preference
+ * main holds in memory (currentState: the file lags the renderer's debounced saves).
+ */
+export function sessionWindowZoom(): number {
+  return reportedZoom ?? currentState().preferences?.zoomFactor ?? 1;
 }
 
 /**

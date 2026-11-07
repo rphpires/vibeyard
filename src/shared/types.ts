@@ -5,6 +5,11 @@ import type { TeamDomain } from './team-config.js';
 export const ZOOM_MIN = 0.75;
 export const ZOOM_MAX = 2.0;
 
+/** A zoom factor kept within [ZOOM_MIN, ZOOM_MAX]. */
+export function clampZoom(factor: number): number {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor));
+}
+
 // --- Provider ---
 
 export type ProviderId = 'claude' | 'codex' | 'copilot' | 'gemini';

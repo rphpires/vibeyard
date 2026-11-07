@@ -6,7 +6,7 @@ import { installCtlScript } from './ctl-script';
 import { stripInheritedCtlEnv } from './ctl-tokens';
 import { killAllPtys } from './pty-manager';
 import { stopAllRemoteMirrors } from './remote-ssh';
-import { currentState, flushState, knownSessionWindowBounds, loadState, saveSessionWindowBounds } from './store';
+import { flushState, knownSessionWindowBounds, loadState, saveSessionWindowBounds } from './store';
 import { createAppMenu } from './menu';
 import { restartAndResync } from './hook-status';
 import { initProviders, getAllProviders } from './providers/registry';
@@ -25,12 +25,18 @@ stripInheritedCtlEnv();
 
 function requestConfirmClose(): void {
   const win = getMainWindow();
-  if (win && !win.isDestroyed()) {
+  if (win) {
     win.webContents.send('app:confirmClose');
   } else {
     setCloseConfirmed(true);
     app.quit();
   }
+}
+
+/** A window open the app does not allow: http(s) goes to the default browser, nothing opens here. */
+function denyOrOpenExternal({ url }: { url: string }): { action: 'deny' } {
+  if (isHttpUrl(url)) shell.openExternal(url);
+  return { action: 'deny' };
 }
 
 function createWindow(): void {
@@ -79,8 +85,7 @@ function createWindow(): void {
         },
       };
     }
-    if (isHttpUrl(url)) shell.openExternal(url);
-    return { action: 'deny' };
+    return denyOrOpenExternal({ url });
   });
 
   mainWindow.webContents.on('did-create-window', (child) => {
@@ -88,12 +93,9 @@ function createWindow(): void {
     // Main's renderer drives the child (its frames and timers): keep it unthrottled meanwhile.
     syncMainThrottling(getMainWindow(), true);
     // The sessions window never opens further windows; http(s) goes to the default browser.
-    child.webContents.setWindowOpenHandler(({ url }) => {
-      if (isHttpUrl(url)) shell.openExternal(url);
-      return { action: 'deny' };
-    });
+    child.webContents.setWindowOpenHandler(denyOrOpenExternal);
     // Match the main window's zoom from the start: in-memory, since the file lags the renderer.
-    child.webContents.setZoomFactor(sessionWindowZoom(currentState().preferences?.zoomFactor));
+    child.webContents.setZoomFactor(sessionWindowZoom());
     // Only about:blank is ever allowed here; everything else is blocked (external http opens in the browser).
     child.webContents.on('will-navigate', (event, navUrl) => {
       if (navUrl === 'about:blank') return;
@@ -175,8 +177,7 @@ function createWindow(): void {
       return;
     }
     // Confirmed close: take the sessions window down with the main one (it has no confirm flow).
-    const sessions = getSessionWindow();
-    if (sessions) sessions.close();
+    getSessionWindow()?.close();
     flushState();
   });
 
@@ -242,7 +243,7 @@ app.whenReady().then(async () => {
       createWindow();
     } else {
       const win = getMainWindow();
-      if (win && !win.isDestroyed()) {
+      if (win) {
         restartAndResync(win);
       }
     }
@@ -250,7 +251,7 @@ app.whenReady().then(async () => {
 
   powerMonitor.on('resume', () => {
     const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
+    if (win) {
       restartAndResync(win);
     }
   });
@@ -264,7 +265,7 @@ app.on('before-quit', (event) => {
   }
   flushState();
   const win = getMainWindow();
-  if (win && !win.isDestroyed()) {
+  if (win) {
     win.webContents.send('app:quitting');
   }
   killAllPtys();

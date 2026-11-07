@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, app, dialog, shell, clipboard } from 'electron';
-import { getMainWindow, getSessionWindow } from './windows';
+import { getMainWindow, getSessionWindow, raiseWindow } from './windows';
 import { rememberSessionWindowZoom } from './session-window';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -32,7 +32,7 @@ import { isGhAvailable, listPullRequests, listIssues, detectRepo } from './githu
 import { expandUserPath, isBinaryBuffer, isLikelyBinaryFile, isMacPackagePath, BINARY_SNIFF_BYTES } from './fs-utils';
 import { isLinux, isMac, isWin } from './platform';
 import { listProfiles as listChromeProfiles, runImport as runChromeImport, clearImportedCookies, getCookieCount } from './chrome-import/importer';
-import { ZOOM_MIN, ZOOM_MAX } from '../shared/types';
+import { clampZoom } from '../shared/types';
 import type { ChromeImportOptions, ChromeImportProgress, ClipboardSource } from '../shared/types';
 import { shouldWarnStatusLine } from './settings-guard';
 import { buildVibeyardignoreMatcher } from './vibeyardignore';
@@ -184,7 +184,7 @@ export function registerIpcHandlers(): void {
       envVars,
       (data) => {
         const w = getMainWindow();
-        if (w && !w.isDestroyed()) {
+        if (w) {
           w.webContents.send('pty:data', sessionId, data);
         }
       },
@@ -193,7 +193,7 @@ export function registerIpcHandlers(): void {
         unregisterCodexSession(sessionId);
         if (isSilencedExit(sessionId)) return; // old PTY killed for re-spawn
         const w = getMainWindow();
-        if (w && !w.isDestroyed()) {
+        if (w) {
           w.webContents.send('pty:exit', sessionId, exitCode, signal);
         }
       },
@@ -241,13 +241,13 @@ export function registerIpcHandlers(): void {
       cwd,
       (data) => {
         const w = getMainWindow();
-        if (w && !w.isDestroyed()) {
+        if (w) {
           w.webContents.send('pty:data', sessionId, data);
         }
       },
       (exitCode, signal) => {
         const w = getMainWindow();
-        if (w && !w.isDestroyed()) {
+        if (w) {
           w.webContents.send('pty:exit', sessionId, exitCode, signal);
         }
       }
@@ -464,11 +464,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.on('sessionWindow:focus', () => {
     const win = getSessionWindow();
-    if (!win) return;
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-    win.moveTop();
+    if (win) raiseWindow(win, { show: true, moveTop: true });
   });
 
   ipcMain.on('sessionWindow:close', () => {
@@ -477,7 +473,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.on('sessionWindow:setZoom', (_event, factor: unknown) => {
     if (typeof factor !== 'number' || !Number.isFinite(factor)) return;
-    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor));
+    const clamped = clampZoom(factor);
     // Remembered even with no sessions window: the next one opens at it.
     rememberSessionWindowZoom(clamped);
     getSessionWindow()?.webContents.setZoomFactor(clamped);
@@ -490,10 +486,7 @@ export function registerIpcHandlers(): void {
   ipcMain.on('app:focus', () => {
     app.focus({ steal: true });
     const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    if (win) raiseWindow(win);
   });
 
   ipcMain.on('app:closeConfirmed', () => {
@@ -928,7 +921,7 @@ export function registerIpcHandlers(): void {
     resolveToken: resolveCtlToken,
     dispatch: (reqId, callerId, command) => {
       const w = getMainWindow();
-      if (w && !w.isDestroyed()) w.webContents.send('ctl:command', reqId, callerId, command);
+      if (w) w.webContents.send('ctl:command', reqId, callerId, command);
     },
   });
   ipcMain.on('ctl:setEnabled', (_event, enabled: boolean) => {

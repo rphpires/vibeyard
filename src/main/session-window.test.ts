@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { BrowserWindow } from 'electron';
+
+const persisted = vi.hoisted(() => ({ zoomFactor: undefined as number | undefined }));
+vi.mock('./store', () => ({ currentState: () => ({ preferences: { zoomFactor: persisted.zoomFactor } }) }));
 import { isSessionWindowOpen, resolveSessionWindowBounds, syncMainThrottling, rememberSessionWindowZoom, sessionWindowZoom } from './session-window';
 
 describe('isSessionWindowOpen', () => {
@@ -68,10 +71,11 @@ describe('syncMainThrottling', () => {
 
 describe('sessionWindowZoom', () => {
   it('uses the persisted zoom until the renderer reports one, then the reported one', () => {
-    expect(sessionWindowZoom(undefined)).toBe(1);
-    expect(sessionWindowZoom(1.25)).toBe(1.25);
+    expect(sessionWindowZoom()).toBe(1);
+    persisted.zoomFactor = 1.25;
+    expect(sessionWindowZoom()).toBe(1.25);
     // A zoom change reported before any child exists (the disk copy still lags).
     rememberSessionWindowZoom(1.5);
-    expect(sessionWindowZoom(1.25)).toBe(1.5);
+    expect(sessionWindowZoom()).toBe(1.5);
   });
 });

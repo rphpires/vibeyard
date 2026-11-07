@@ -1,9 +1,8 @@
 import type { BrowserWindow } from 'electron';
+import type { ViewKind } from '../shared/session-window';
 
 // Explicit window registry. Once a second window exists, the first entry of getAllWindows()
 // is no longer guaranteed to be the main window, so main-process code must go through here.
-
-export type WindowKind = 'main' | 'sessions';
 
 let mainWindow: BrowserWindow | null = null;
 let sessionWindow: BrowserWindow | null = null;
@@ -28,9 +27,20 @@ export function setSessionWindow(win: BrowserWindow | null): void {
   sessionWindow = win;
 }
 
-export function windowKindOf(win: BrowserWindow | null): WindowKind | null {
+export function windowKindOf(win: BrowserWindow | null): ViewKind | null {
   if (!win) return null;
   if (win === mainWindow) return 'main';
   if (win === sessionWindow) return 'sessions';
   return null;
+}
+
+/**
+ * Restore (if minimized) and focus `win`. `show`/`moveTop` also make it visible and put
+ * it above every other window (the sessions window, which a plain focus may not raise).
+ */
+export function raiseWindow(win: BrowserWindow, opts: { show?: boolean; moveTop?: boolean } = {}): void {
+  if (win.isMinimized()) win.restore();
+  if (opts.show) win.show();
+  win.focus();
+  if (opts.moveTop) win.moveTop();
 }
