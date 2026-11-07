@@ -5,6 +5,7 @@ import { destroySearchBar } from './search-bar.js';
 import { isAbsolutePath, dirname, samePath } from '../../shared/platform.js';
 
 interface FileViewerInstance {
+  sessionId: string;
   element: HTMLElement;
   filePath: string;
   area: string;
@@ -90,8 +91,13 @@ function parseDiffLines(diff: string): HTMLElement {
   return content;
 }
 
+/** The project owning this diff tab — not the active one when it sits in the sessions window. */
+function ownerProject(instance: FileViewerInstance) {
+  return appState.findSessionWithProject(instance.sessionId)?.project;
+}
+
 function resolveFilePath(instance: FileViewerInstance): string {
-  const project = appState.activeProject;
+  const project = ownerProject(instance);
   const basePath = instance.worktreePath ?? project?.path ?? '';
   return isAbsolutePath(instance.filePath)
     ? instance.filePath
@@ -103,7 +109,7 @@ let loadGeneration = 0;
 async function loadDiff(instance: FileViewerInstance, sessionId: string): Promise<void> {
   if (instance.loaded) return;
 
-  const project = appState.activeProject;
+  const project = ownerProject(instance);
   if (!project) return;
 
   if (instance.area === 'untracked') {
@@ -181,7 +187,7 @@ export function createFileViewerPane(sessionId: string, filePath: string, area: 
   body.className = 'file-viewer-body';
   el.appendChild(body);
 
-  const instance: FileViewerInstance = { element: el, filePath, area, worktreePath, resolvedPath: null, loaded: false };
+  const instance: FileViewerInstance = { sessionId, element: el, filePath, area, worktreePath, resolvedPath: null, loaded: false };
   instances.set(sessionId, instance);
 }
 

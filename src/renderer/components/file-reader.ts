@@ -12,6 +12,7 @@ import { openFileReaderChecked } from '../open-file-reader.js';
 import { slugifyHeading } from '../../shared/slug.js';
 
 interface FileReaderInstance {
+  sessionId: string;
   element: HTMLElement;
   filePath: string;
   resolvedPath: string | null;
@@ -79,7 +80,7 @@ function scrollToHeading(wrapper: HTMLElement, slug: string): void {
  * suppressed: the renderer is a `file://` document, so letting an anchor
  * navigate would replace the whole app with the link target.
  */
-function handleMarkdownClick(wrapper: HTMLElement, baseDir: string | undefined, event: MouseEvent): void {
+function handleMarkdownClick(wrapper: HTMLElement, baseDir: string | undefined, projectId: string | undefined, event: MouseEvent): void {
   const anchor = (event.target as Element | null)?.closest('a');
   if (!anchor) return;
 
@@ -102,8 +103,9 @@ function handleMarkdownClick(wrapper: HTMLElement, baseDir: string | undefined, 
       // openFileReaderChecked validates the path before it spawns a tab — a
       // dead link would otherwise open a tab that loadFile tears down again,
       // dropping the reader on an unrelated tab.
-      const project = appState.activeProject;
-      if (project) void openFileReaderChecked(project.id, target.path);
+      // The reader's own project: in the sessions window it is not the active one.
+      const id = projectId ?? appState.activeProject?.id;
+      if (id) void openFileReaderChecked(id, target.path);
       break;
     }
     case 'ignore':
@@ -112,12 +114,13 @@ function handleMarkdownClick(wrapper: HTMLElement, baseDir: string | undefined, 
   }
 }
 
-export function renderMarkdownContent(content: string, baseDir?: string): HTMLElement {
+/** `projectId`: the project a file link opens in (the reader's own); defaults to the active one. */
+export function renderMarkdownContent(content: string, baseDir?: string, projectId?: string): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'file-reader-markdown';
   const rawHtml = marked.parse(content, { async: false }) as string;
   wrapper.innerHTML = DOMPurify.sanitize(rawHtml);
-  wrapper.addEventListener('click', (event) => handleMarkdownClick(wrapper, baseDir, event));
+  wrapper.addEventListener('click', (event) => handleMarkdownClick(wrapper, baseDir, projectId, event));
   return wrapper;
 }
 
@@ -146,14 +149,19 @@ function renderBody(instance: FileReaderInstance): void {
     return;
   }
   if (instance.viewMode === 'rendered') {
-    body.appendChild(renderMarkdownContent(instance.rawContent!, dirname(resolveFilePath(instance))));
+    body.appendChild(renderMarkdownContent(instance.rawContent!, dirname(resolveFilePath(instance)), ownerProject(instance)?.id));
   } else {
     body.appendChild(renderFileContent(instance.rawContent!));
   }
 }
 
+/** The project owning this reader's tab — not the active one when it sits in the sessions window. */
+function ownerProject(instance: FileReaderInstance) {
+  return appState.findSessionWithProject(instance.sessionId)?.project;
+}
+
 function resolveFilePath(instance: FileReaderInstance): string {
-  const project = appState.activeProject;
+  const project = ownerProject(instance);
   if (isAbsolutePath(instance.filePath)) return instance.filePath;
   return project ? `${project.path}/${instance.filePath}` : instance.filePath;
 }
@@ -165,8 +173,7 @@ function showFileReaderMessage(body: Element, message: string): void {
 async function loadFile(instance: FileReaderInstance, sessionId: string): Promise<void> {
   if (instance.loaded) return;
 
-  const project = appState.activeProject;
-  if (!project) return;
+  if (!ownerProject(instance)) return;
 
   instance.unsupported = false;
   hideTokenBadge(instance);
@@ -286,7 +293,7 @@ export function createFileReaderPane(sessionId: string, filePath: string, target
   const isMd = isMarkdownFile(filePath);
   const isImage = isImageFile(filePath);
   const instance: FileReaderInstance = {
-    element: el, filePath, resolvedPath: null, loaded: false, targetLine,
+    sessionId, element: el, filePath, resolvedPath: null, loaded: false, targetLine,
     viewMode: isMd ? 'rendered' : 'raw',
     kind: isImage ? 'image' : 'text',
     unsupported: false,
@@ -298,7 +305,7 @@ export function createFileReaderPane(sessionId: string, filePath: string, target
     openBtn.textContent = 'Open in Browser';
     openBtn.title = 'Open this file in the embedded browser';
     openBtn.addEventListener('click', () => {
-      const project = appState.activeProject;
+      const project = ownerProject(instance);
       if (project) {
         appState.addBrowserTabSession(project.id, pathToFileURL(resolveFilePath(instance)));
       }

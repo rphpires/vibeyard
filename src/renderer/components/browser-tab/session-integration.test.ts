@@ -17,9 +17,17 @@ const captureScreenshotPath = vi.fn<[BrowserTabInstance], Promise<string | null>
 let projectSessions: Array<{ id: string; name: string; type?: string }> = [];
 let activeProjectValue: { id: string; sessions: typeof projectSessions } | null = { id: 'proj-1', sessions: projectSessions };
 
+// Project B, detached into the sessions window, owns the browser tab 'web-b'; every
+// other browser tab belongs to the active project.
+const projectB = { id: 'B', sessions: [{ id: 'web-b', name: 'web' }, { id: 'sess-B', name: 'B1' }] };
+
 vi.mock('../../state.js', () => ({
   appState: {
     get activeProject() { return activeProjectValue; },
+    findSessionWithProject: (id: string) => {
+      if (id === 'web-b') return { project: projectB, session: projectB.sessions[0] };
+      return activeProjectValue ? { project: activeProjectValue, session: { id } } : undefined;
+    },
     setActiveSession,
     addPlanSession,
   },
@@ -60,6 +68,8 @@ function makeSession(id: string, name = id): SessionRecord {
 
 function makeInstance(overrides: Partial<Record<string, unknown>> = {}): BrowserTabInstance {
   return {
+    sessionId: 'web-1',
+    element: { ownerDocument: { id: 'main-doc' } },
     instructionInput: { value: 'inspect me' } as HTMLTextAreaElement,
     flowInstructionInput: { value: 'replay flow' } as HTMLTextAreaElement,
     drawInstructionInput: { value: 'annotate this' } as HTMLTextAreaElement,
@@ -214,3 +224,39 @@ describe('deliverDraw', () => {
   });
 });
 
+describe('a browser tab of the project detached into the sessions window (main shows proj-1)', () => {
+  const otherDoc = { id: 'sessions-doc' } as unknown as Document;
+  const bTab = (o: Partial<Record<string, unknown>> = {}) =>
+    makeInstance({ sessionId: 'web-b', element: { ownerDocument: otherDoc }, ...o });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setProject([{ id: 'sess-A', name: 'A' }]);
+    injectPromptIntoRunningSession.mockReset();
+    injectPromptIntoRunningSession.mockReturnValue(true);
+  });
+
+  it('delivers to a session of its own project, not dropped for missing from the active one', async () => {
+    const { deliverInspect } = await import('./session-integration.js');
+    deliverInspect(bTab(), makeSession('sess-B'));
+    expect(injectPromptIntoRunningSession).toHaveBeenCalledWith('sess-B', 'inspect me');
+    expect(setActiveSession).toHaveBeenCalledWith('B', 'sess-B');
+  });
+
+  it('new inspect / flow sessions are created in its own project', async () => {
+    const { sendToNewSession, sendFlowToNewSession } = await import('./session-integration.js');
+    sendToNewSession(bTab());
+    sendFlowToNewSession(bTab());
+    expect(addPlanSession.mock.calls.map((c) => c[0])).toEqual(['B', 'B']);
+  });
+
+  it('the custom-session dialog offers its own project, in its own window', async () => {
+    const { sendToCustomSession, sendFlowToCustomSession } = await import('./session-integration.js');
+    sendToCustomSession(bTab());
+    sendFlowToCustomSession(bTab());
+    for (const call of promptNewSession.mock.calls) {
+      expect(call[1]).toEqual({ projectId: 'B', doc: otherDoc });
+    }
+    expect(promptNewSession).toHaveBeenCalledTimes(2);
+  });
+});
