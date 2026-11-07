@@ -116,6 +116,19 @@ function teardown(): void {
   renderTabBars();
 }
 
+/**
+ * Tear down and have the main process close the child. Every teardown that is not the
+ * main process reporting the close goes through here: `closing` is only cleared by that
+ * report, so a child left open (its document replaced by an about:blank re-navigation)
+ * would stay empty and hold every later open in `pendingOpen` forever. Closing an
+ * already-closing window is harmless.
+ */
+function teardownAndClose(): void {
+  if (!current) return;
+  teardown();
+  window.vibeyard.sessionWindow.close();
+}
+
 function build(win: Window): OpenWindow {
   const doc = win.document;
   doc.title = 'Vibeyard';
@@ -150,7 +163,7 @@ function build(win: Window): OpenWindow {
     runWithCommandSource('sessions', () => { shortcutManager.matchEvent(e); });
   };
   // Panes must be out before the document dies (see module docstring).
-  const onPagehide = (): void => { if (current === w) teardown(); };
+  const onPagehide = (): void => { if (current === w) teardownAndClose(); };
   win.addEventListener('resize', scheduleFit);
   win.addEventListener('pagehide', onPagehide);
   doc.addEventListener('keydown', onKeydown);
@@ -196,7 +209,7 @@ function detach(projectId: string): void {
 export function openSessionWindow(projectId: string): void {
   if (!appState.projects.some((p) => p.id === projectId)) return;
 
-  if (current && !isAlive(current)) teardown();
+  if (current && !isAlive(current)) teardownAndClose();
 
   if (current) {
     if (getDetachedProjectId() !== projectId) {
@@ -234,10 +247,8 @@ export function openSessionWindow(projectId: string): void {
 /** Bring the sessions window back into the main window. Idempotent. */
 export function closeSessionWindow(): void {
   pendingOpen = null;
-  if (!current) return;
   // Panes out first, while the child document is still alive.
-  teardown();
-  window.vibeyard.sessionWindow.close();
+  teardownAndClose();
 }
 
 export function initSessionWindow(): void {

@@ -198,6 +198,28 @@ describe('session window controller', () => {
     expect(layout.evacuateLayoutView).toHaveBeenCalledTimes(1);
   });
 
+  it('a pagehide that did not come from a close (the child re-navigated) still closes the window', () => {
+    sw.openSessionWindow('B');
+    childWin().dispatchEvent(new Event('pagehide'));
+    // Else the child stays open and empty, and every later detach waits for a close forever.
+    expect(sessionWindowApi.close).toHaveBeenCalledTimes(1);
+    onClosedCb!();
+    sw.openSessionWindow('C');
+    expect(openSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('a child found dead on the next open is closed too, and the open waits for it', () => {
+    sw.openSessionWindow('B');
+    // Its document was replaced: the handle no longer holds our root.
+    childWin().document.querySelector('.session-window')!.remove();
+    sw.openSessionWindow('C');
+    expect(sessionWindowApi.close).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    onClosedCb!();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    expect(windowState.getDetachedProjectId()).toBe('C');
+  });
+
   it('closeSessionWindow moves the panes back first, then closes; idempotent', () => {
     sw.closeSessionWindow();
     expect(sessionWindowApi.close).not.toHaveBeenCalled();
