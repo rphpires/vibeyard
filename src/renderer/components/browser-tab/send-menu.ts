@@ -2,7 +2,6 @@ import { appState, type SessionRecord } from '../../state.js';
 import { isCliSession } from '../../session-utils.js';
 import { getTerminalInstance } from '../terminal-pane.js';
 import type { BrowserTabInstance } from './types.js';
-import { browserTabProject } from './owner.js';
 
 export interface SendMenuActions {
   deliverTo: (session: SessionRecord) => void | Promise<void>;
@@ -52,7 +51,7 @@ function renderItems(instance: BrowserTabInstance, actions: SendMenuActions): vo
   menu.innerHTML = '';
 
   // The tab's own project: in the sessions window it is not the active one.
-  const project = browserTabProject(instance);
+  const project = appState.projectOfSession(instance.sessionId);
   const sessions = (project?.sessions ?? []).filter(isCliSession);
 
   for (const s of sessions) {

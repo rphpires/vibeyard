@@ -15,6 +15,7 @@ vi.mock('../state.js', () => ({
   appState: {
     get activeProject() { return activeProject; },
     get projects() { return [activeProject, projectB].filter(Boolean); },
+    projectOfSession(id: string) { return this.findSessionWithProject(id)?.project; },
     findSessionWithProject: (id: string) => {
       const session = projectB.sessions.find((s) => s.id === id);
       return session ? { project: projectB, session } : undefined;

@@ -24,6 +24,7 @@ const projectB = { id: 'B', sessions: [{ id: 'web-b', name: 'web' }, { id: 'sess
 vi.mock('../../state.js', () => ({
   appState: {
     get activeProject() { return activeProjectValue; },
+    projectOfSession(id: string) { return this.findSessionWithProject(id)?.project; },
     findSessionWithProject: (id: string) => {
       if (id === 'web-b') return { project: projectB, session: projectB.sessions[0] };
       return activeProjectValue ? { project: activeProjectValue, session: { id } } : undefined;

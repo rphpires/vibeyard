@@ -90,13 +90,8 @@ function parseDiffLines(diff: string): HTMLElement {
   return content;
 }
 
-/** The project owning this diff tab — not the active one when it sits in the sessions window. */
-function ownerProject(instance: FileViewerInstance) {
-  return appState.findSessionWithProject(instance.sessionId)?.project;
-}
-
 function resolveFilePath(instance: FileViewerInstance): string {
-  const project = ownerProject(instance);
+  const project = appState.projectOfSession(instance.sessionId);
   const basePath = instance.worktreePath ?? project?.path ?? '';
   return isAbsolutePath(instance.filePath)
     ? instance.filePath
@@ -108,7 +103,7 @@ let loadGeneration = 0;
 async function loadDiff(instance: FileViewerInstance, sessionId: string): Promise<void> {
   if (instance.loaded) return;
 
-  const project = ownerProject(instance);
+  const project = appState.projectOfSession(instance.sessionId);
   if (!project) return;
 
   if (instance.area === 'untracked') {

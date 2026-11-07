@@ -2,7 +2,7 @@ import { appState } from '../../state.js';
 import { promptNewSession } from '../tab-bar.js';
 import { setPendingPrompt } from '../terminal-pane.js';
 import type { BrowserTabInstance } from './types.js';
-import { browserTabProject, customSessionOptions } from './owner.js';
+import { customSessionOptions } from './owner.js';
 import { positionPopover } from './popover.js';
 import { getViewportContext } from './viewport.js';
 import { isWin } from '../../platform.js';
@@ -82,7 +82,7 @@ export function buildDrawPrompt(instance: BrowserTabInstance, imagePath: string)
 export async function sendDrawToNewSession(instance: BrowserTabInstance): Promise<void> {
   const instruction = instance.drawInstructionInput.value.trim();
   if (!instruction) return;
-  const project = browserTabProject(instance);
+  const project = appState.projectOfSession(instance.sessionId);
   if (!project) return;
 
   hideDrawError(instance);

@@ -150,19 +150,14 @@ function renderBody(instance: FileReaderInstance): void {
     return;
   }
   if (instance.viewMode === 'rendered') {
-    body.appendChild(renderMarkdownContent(instance.rawContent!, dirname(resolveFilePath(instance)), ownerProject(instance)?.id));
+    body.appendChild(renderMarkdownContent(instance.rawContent!, dirname(resolveFilePath(instance)), appState.projectOfSession(instance.sessionId)?.id));
   } else {
     body.appendChild(renderFileContent(instance.rawContent!));
   }
 }
 
-/** The project owning this reader's tab — not the active one when it sits in the sessions window. */
-function ownerProject(instance: FileReaderInstance) {
-  return appState.findSessionWithProject(instance.sessionId)?.project;
-}
-
 function resolveFilePath(instance: FileReaderInstance): string {
-  const project = ownerProject(instance);
+  const project = appState.projectOfSession(instance.sessionId);
   if (isAbsolutePath(instance.filePath)) return instance.filePath;
   return project ? `${project.path}/${instance.filePath}` : instance.filePath;
 }
@@ -174,7 +169,7 @@ function showFileReaderMessage(body: Element, message: string): void {
 async function loadFile(instance: FileReaderInstance, sessionId: string): Promise<void> {
   if (instance.loaded) return;
 
-  if (!ownerProject(instance)) return;
+  if (!appState.projectOfSession(instance.sessionId)) return;
 
   instance.unsupported = false;
   hideTokenBadge(instance);
@@ -306,7 +301,7 @@ export function createFileReaderPane(sessionId: string, filePath: string, target
     openBtn.textContent = 'Open in Browser';
     openBtn.title = 'Open this file in the embedded browser';
     openBtn.addEventListener('click', () => {
-      const project = ownerProject(instance);
+      const project = appState.projectOfSession(instance.sessionId);
       if (project) {
         appState.addBrowserTabSession(project.id, pathToFileURL(resolveFilePath(instance)));
       }

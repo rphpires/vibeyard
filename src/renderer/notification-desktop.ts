@@ -55,7 +55,7 @@ function showNotification(sessionId: string, status: SessionStatus): void {
     // Re-resolve rather than capturing `found`: the session may have been
     // renamed or moved, and capturing it would pin the whole ProjectRecord
     // alive for as long as this retained notification lives.
-    const project = appState.findSessionWithProject(sessionId)?.project;
+    const project = appState.projectOfSession(sessionId);
     if (project) revealSession(project.id, sessionId);
     notification.close(); // `onclose` evicts the map entry.
   };

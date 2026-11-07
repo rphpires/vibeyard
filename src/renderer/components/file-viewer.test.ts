@@ -17,6 +17,7 @@ vi.mock('../state.js', () => ({
     get activeProject() { return activeProjectRef ?? projectA; },
     addDiffViewerSession,
     projects: [projectA, projectB],
+    projectOfSession(id: string) { return this.findSessionWithProject(id)?.project; },
     findSessionWithProject: (id: string) => {
       for (const project of [projectA, projectB]) {
         const session = project.sessions.find((s) => s.id === id);

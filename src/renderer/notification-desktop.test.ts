@@ -17,6 +17,7 @@ const mockAppState = vi.hoisted(() => {
     get activeProject() {
       return state.projects.find(p => p.id === state.activeProjectId);
     },
+    projectOfSession(id: string) { return this.findSessionWithProject(id)?.project; },
     findSessionWithProject(sessionId: string) {
       for (const project of state.projects) {
         const session = project.sessions.find(s => s.id === sessionId);
