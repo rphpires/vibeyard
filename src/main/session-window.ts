@@ -38,6 +38,19 @@ export function resolveSessionWindowBounds(
   };
 }
 
+// The zoom the renderer last reported (sessionWindow:setZoom is sent on every change,
+// child or not): a detach right after a zoom change must not open at the old one.
+let reportedZoom: number | undefined;
+
+export function rememberSessionWindowZoom(factor: number): void {
+  reportedZoom = factor;
+}
+
+/** The zoom a new sessions window opens at: the last reported one, else the persisted one. */
+export function sessionWindowZoom(persisted: number | undefined): number {
+  return reportedZoom ?? persisted ?? 1;
+}
+
 /**
  * The sessions window has no code of its own: the main renderer drives it, rAF and
  * timers included. Chromium throttles a minimized or covered window's renderer, so

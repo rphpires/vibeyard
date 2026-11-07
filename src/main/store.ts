@@ -55,6 +55,12 @@ export function setKnownSessionWindowBounds(bounds: Bounds | undefined): void {
   boundsSeeded = true;
 }
 
+/** The sessions window bounds main knows (its own saves win over the file), without a disk read once seeded. */
+export function knownSessionWindowBounds(): Bounds | undefined {
+  if (!boundsSeeded) loadState();
+  return knownBounds;
+}
+
 export function preserveMainOwnedFields(incoming: PersistedState, known: Bounds | undefined): PersistedState {
   if (!known) return incoming;
   return { ...incoming, sessionWindowBounds: known };
@@ -80,6 +86,14 @@ export function saveState(incoming: PersistedState): void {
 }
 
 let lastState: PersistedState | null = null;
+
+/**
+ * The freshest state main holds: the last one the renderer saved (the file lags it by
+ * the save debounce), else the file. For reads at runtime, such as the sessions window's zoom.
+ */
+export function currentState(): PersistedState {
+  return lastState ?? loadState();
+}
 
 export function flushState(): void {
   if (lastState) {

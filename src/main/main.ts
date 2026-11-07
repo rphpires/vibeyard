@@ -6,7 +6,7 @@ import { installCtlScript } from './ctl-script';
 import { stripInheritedCtlEnv } from './ctl-tokens';
 import { killAllPtys } from './pty-manager';
 import { stopAllRemoteMirrors } from './remote-ssh';
-import { flushState, loadState, saveSessionWindowBounds } from './store';
+import { currentState, flushState, knownSessionWindowBounds, loadState, saveSessionWindowBounds } from './store';
 import { createAppMenu } from './menu';
 import { restartAndResync } from './hook-status';
 import { initProviders, getAllProviders } from './providers/registry';
@@ -18,7 +18,7 @@ import { isMac } from './platform';
 import { isCloseConfirmed, setCloseConfirmed } from './close-state';
 import { isHttpUrl } from '../shared/url';
 import { getMainWindow, setMainWindow, getSessionWindow, setSessionWindow } from './windows';
-import { isSessionWindowOpen, resolveSessionWindowBounds, syncMainThrottling } from './session-window';
+import { isSessionWindowOpen, resolveSessionWindowBounds, sessionWindowZoom, syncMainThrottling } from './session-window';
 
 // Before anything spawns: never pass a parent Vibeyard tab's ctl identity on.
 stripInheritedCtlEnv();
@@ -64,7 +64,7 @@ function createWindow(): void {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
-          ...resolveSessionWindowBounds(loadState().sessionWindowBounds, screen.getAllDisplays(), mainWindow.getBounds()),
+          ...resolveSessionWindowBounds(knownSessionWindowBounds(), screen.getAllDisplays(), mainWindow.getBounds()),
           minWidth: 500,
           minHeight: 300,
           title: 'Vibeyard',
@@ -92,8 +92,8 @@ function createWindow(): void {
       if (isHttpUrl(url)) shell.openExternal(url);
       return { action: 'deny' };
     });
-    // Match the main window's persisted zoom from the start.
-    child.webContents.setZoomFactor(loadState().preferences?.zoomFactor ?? 1);
+    // Match the main window's zoom from the start: in-memory, since the file lags the renderer.
+    child.webContents.setZoomFactor(sessionWindowZoom(currentState().preferences?.zoomFactor));
     // Only about:blank is ever allowed here; everything else is blocked (external http opens in the browser).
     child.webContents.on('will-navigate', (event, navUrl) => {
       if (navUrl === 'about:blank') return;

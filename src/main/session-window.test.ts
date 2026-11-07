@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { BrowserWindow } from 'electron';
-import { isSessionWindowOpen, resolveSessionWindowBounds, syncMainThrottling } from './session-window';
+import { isSessionWindowOpen, resolveSessionWindowBounds, syncMainThrottling, rememberSessionWindowZoom, sessionWindowZoom } from './session-window';
 
 describe('isSessionWindowOpen', () => {
   it('accepts only about:blank with a numbered sessions frame name', () => {
@@ -63,5 +63,15 @@ describe('syncMainThrottling', () => {
     const { win, setBackgroundThrottling } = fakeMain(true);
     syncMainThrottling(win, false);
     expect(setBackgroundThrottling).not.toHaveBeenCalled();
+  });
+});
+
+describe('sessionWindowZoom', () => {
+  it('uses the persisted zoom until the renderer reports one, then the reported one', () => {
+    expect(sessionWindowZoom(undefined)).toBe(1);
+    expect(sessionWindowZoom(1.25)).toBe(1.25);
+    // A zoom change reported before any child exists (the disk copy still lags).
+    rememberSessionWindowZoom(1.5);
+    expect(sessionWindowZoom(1.25)).toBe(1.5);
   });
 });

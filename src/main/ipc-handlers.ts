@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, app, dialog, shell, clipboard } from 'electron';
 import { getMainWindow, getSessionWindow } from './windows';
+import { rememberSessionWindowZoom } from './session-window';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -476,7 +477,10 @@ export function registerIpcHandlers(): void {
 
   ipcMain.on('sessionWindow:setZoom', (_event, factor: unknown) => {
     if (typeof factor !== 'number' || !Number.isFinite(factor)) return;
-    getSessionWindow()?.webContents.setZoomFactor(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor)));
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor));
+    // Remembered even with no sessions window: the next one opens at it.
+    rememberSessionWindowZoom(clamped);
+    getSessionWindow()?.webContents.setZoomFactor(clamped);
   });
 
   ipcMain.on('sessionWindow:setTitle', (_event, title: unknown) => {
