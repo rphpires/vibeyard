@@ -75,7 +75,8 @@ vi.mock('./components/browser-tab/instance.js', () => ({
 const menuApi = new Proxy({}, {
   get: (_t, name: string) => (cb: (...a: unknown[]) => void) => { h.menu[name] = cb; return () => {}; },
 });
-(window as unknown as { vibeyard: unknown }).vibeyard = { menu: menuApi };
+const appFocus = vi.fn();
+(window as unknown as { vibeyard: unknown }).vibeyard = { menu: menuApi, app: { focus: appFocus } };
 
 const ws = await import('./session-window-state.js');
 const shortcutsModule = await import('./shortcuts.js');
@@ -149,16 +150,16 @@ describe('keyboard shortcuts', () => {
   });
 
   it('a main-only shortcut from the sessions window focuses the main window and runs there', () => {
-    const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+    // Raised through app:focus (restore + steal): window.focus() may not raise it on Windows.
+    appFocus.mockClear();
     h.sw.isSessionWindowFocused.mockReturnValue(true);
     h.handlers['toggle-sidebar']();
-    expect(focus).toHaveBeenCalled();
+    expect(appFocus).toHaveBeenCalled();
     expect(h.toggleSidebar).toHaveBeenCalled();
-    focus.mockClear();
+    appFocus.mockClear();
     h.sw.isSessionWindowFocused.mockReturnValue(false);
     h.handlers['toggle-sidebar']();
-    expect(focus).not.toHaveBeenCalled();
-    focus.mockRestore();
+    expect(appFocus).not.toHaveBeenCalled();
   });
 
   it('the inspector shortcut does nothing from the sessions window (the panel lives in main)', () => {
@@ -252,9 +253,8 @@ describe('native menu', () => {
   });
 
   it('a main-only menu item from the sessions window focuses the main window', () => {
-    const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+    appFocus.mockClear();
     h.menu.onNewProject('sessions');
-    expect(focus).toHaveBeenCalled();
-    focus.mockRestore();
+    expect(appFocus).toHaveBeenCalled();
   });
 });
