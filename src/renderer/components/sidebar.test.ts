@@ -172,9 +172,9 @@ describe('session window entry point', () => {
     const closeSessionWindow = vi.fn();
     vi.doMock('../session-window.js', () => ({ openSessionWindow, closeSessionWindow }));
     const { toggleSessionWindow } = await load();
-    toggleSessionWindow({ id: 'a' } as any, null);
+    await toggleSessionWindow({ id: 'a' } as any, null);
     expect(openSessionWindow).toHaveBeenCalledWith('a');
-    toggleSessionWindow({ id: 'a' } as any, 'a');
+    await toggleSessionWindow({ id: 'a' } as any, 'a');
     expect(closeSessionWindow).toHaveBeenCalledTimes(1);
   });
 

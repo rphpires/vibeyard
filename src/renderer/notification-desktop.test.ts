@@ -35,14 +35,14 @@ const mockAppState = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('./session-window.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
+vi.mock('./session-window-handle.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('./state.js', () => ({
   appState: mockAppState,
 }));
 
 import { _resetForTesting as resetActivity, setHookStatus, initSession } from './session-activity.js';
 import { _resetForTesting as resetDesktopNotif, initNotificationDesktop } from './notification-desktop.js';
-import { isSessionWindowFocused } from './session-window.js';
+import { isSessionWindowFocused } from './session-window-handle.js';
 import * as windowState from './session-window-state.js';
 
 

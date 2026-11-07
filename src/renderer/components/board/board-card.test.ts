@@ -32,7 +32,7 @@ vi.mock('../../provider-availability.js', () => ({
   getProviderCapabilities: vi.fn(),
   hasMultipleAvailableProviders: vi.fn(() => false),
 }));
-vi.mock('../../session-window.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
+vi.mock('../../session-window-handle.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('../terminal-pane.js', () => ({ setPendingPrompt: vi.fn() }));
 vi.mock('./board-task-modal.js', () => ({ showTaskModal: vi.fn() }));
 vi.mock('./board-context-menu.js', () => ({ showContextMenu: vi.fn() }));

@@ -36,6 +36,19 @@ import { fitAllVisible } from './components/terminal-pane.js';
 import { installDocChrome } from './doc-chrome.js';
 import { shortcutManager } from './shortcuts.js';
 import { t } from './i18n.js';
+import {
+  focusSessionWindow,
+  isHandleAlive,
+  setSessionWindowHandle,
+} from './session-window-handle.js';
+
+// The light queries live in session-window-handle.ts (no layout imports); re-exported here.
+export {
+  focusSessionWindow,
+  isSessionWindowFocused,
+  getSessionWindowDocument,
+  isSessionWindowOpen,
+} from './session-window-handle.js';
 
 interface OpenWindow {
   win: Window;
@@ -67,11 +80,12 @@ function mainContainer(): HTMLElement {
 
 /** Still the window (and document) we built? A closed or re-navigated one is gone. */
 function isAlive(w: OpenWindow): boolean {
-  try {
-    return !w.win.closed && w.win.document === w.doc && w.doc.body?.contains(w.root) === true;
-  } catch {
-    return false;
-  }
+  return isHandleAlive(w);
+}
+
+function setCurrent(w: OpenWindow | null): void {
+  current = w;
+  setSessionWindowHandle(w);
 }
 
 function updateTitle(): void {
@@ -90,7 +104,7 @@ function updateTitle(): void {
 function teardown(): void {
   const w = current;
   if (!w) return;
-  current = null;
+  setCurrent(null);
   closing = true;
   evacuateLayoutView(w.layout, mainContainer());
   destroyLayoutView(w.layout);
@@ -206,7 +220,7 @@ export function openSessionWindow(projectId: string): void {
     return;
   }
 
-  current = build(win);
+  setCurrent(build(win));
   detach(projectId);
   renderLayout();
   renderTabBars();
@@ -220,28 +234,6 @@ export function closeSessionWindow(): void {
   // Panes out first, while the child document is still alive.
   teardown();
   window.vibeyard.sessionWindow.close();
-}
-
-export function focusSessionWindow(): void {
-  if (current) window.vibeyard.sessionWindow.focus();
-}
-
-export function isSessionWindowFocused(): boolean {
-  if (!current) return false;
-  try {
-    return current.doc.hasFocus();
-  } catch {
-    return false;
-  }
-}
-
-/** The sessions window's document while it is open. */
-export function getSessionWindowDocument(): Document | null {
-  return current && isAlive(current) ? current.doc : null;
-}
-
-export function isSessionWindowOpen(): boolean {
-  return current !== null;
 }
 
 export function initSessionWindow(): void {

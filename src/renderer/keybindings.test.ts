@@ -47,6 +47,7 @@ const h = vi.hoisted(() => {
 
 vi.mock('./state.js', () => ({ appState: h.fakeState }));
 vi.mock('./session-window.js', () => h.sw);
+vi.mock('./session-window-handle.js', () => h.sw);
 vi.mock('./session-close.js', () => ({ closeTab: h.closeTab }));
 vi.mock('./components/sidebar.js', () => ({ promptNewProject: vi.fn(), toggleSidebar: h.toggleSidebar, toggleGitPanel: vi.fn() }));
 vi.mock('./components/tab-bar.js', () => ({ quickNewSession: h.quickNewSession }));

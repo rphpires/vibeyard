@@ -15,6 +15,7 @@ const { sw, ctlListeners } = vi.hoisted(() => ({
   ctlListeners: {} as Record<string, (...a: unknown[]) => void>,
 }));
 vi.mock('./session-window.js', () => sw);
+vi.mock('./session-window-handle.js', () => sw);
 vi.mock('./session-cost.js', () => ({ getCost: vi.fn().mockReturnValue(null), restoreCost: vi.fn() }));
 vi.mock('./session-context.js', () => ({ restoreContext: vi.fn() }));
 vi.mock('./provider-availability.js', () => ({

@@ -16,7 +16,7 @@ import {
   viewShowsSession,
   type ViewKind,
 } from './session-window-state.js';
-import { focusSessionWindow, getSessionWindowDocument, isSessionWindowFocused } from './session-window.js';
+import { focusSessionWindow, getSessionWindowDocument, isSessionWindowFocused } from './session-window-handle.js';
 
 /** The window a native-menu click came from. */
 export type CommandSource = 'main' | 'sessions';

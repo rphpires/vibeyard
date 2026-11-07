@@ -21,7 +21,6 @@ import { attachHoverCard } from './hover-card.js';
 import { mountGitPanel, closeGitPanel } from './git-panel.js';
 import { gitChangeCount, onChange as onGitStatusChange } from '../git-status.js';
 import { ICON_KANBAN, ICON_TEAM, ICON_OVERVIEW, ICON_SESSIONS, ICON_FILES, ICON_GIT, ICON_DETACH } from '../icons.js';
-import { openSessionWindow, closeSessionWindow } from '../session-window.js';
 import { revealProject } from '../reveal.js';
 import { getDetachedProjectId, onDetachedChange } from '../session-window-state.js';
 import { t } from '../i18n.js';
@@ -230,7 +229,13 @@ export function detachButtonState(
   return { visible: prefEnabled || active, active };
 }
 
-export function toggleSessionWindow(project: ProjectRecord, detachedId: string | null): void {
+/**
+ * Loaded on click: session-window.ts imports the whole layout (split-layout, tab bar,
+ * every pane), and a static import here would pull all of it into everything that
+ * imports the sidebar. In the bundle the import resolves in a microtask.
+ */
+export async function toggleSessionWindow(project: ProjectRecord, detachedId: string | null): Promise<void> {
+  const { openSessionWindow, closeSessionWindow } = await import('../session-window.js');
   if (project.id === detachedId) closeSessionWindow();
   else openSessionWindow(project.id);
 }
@@ -458,7 +463,7 @@ function buildProjectActions(
     detachBtn.classList.add('detach-toggle');
     detachBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      toggleSessionWindow(project, detachedId);
+      void toggleSessionWindow(project, detachedId);
     });
     actions.appendChild(detachBtn);
   }

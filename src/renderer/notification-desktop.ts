@@ -1,7 +1,7 @@
 import { appState } from './state.js';
 import { onChange, type SessionStatus } from './session-activity.js';
 import { revealSession } from './reveal.js';
-import { isSessionWindowFocused } from './session-window.js';
+import { isSessionWindowFocused } from './session-window-handle.js';
 import { getDetachedProjectId, viewActiveSessionId } from './session-window-state.js';
 
 /** The session is the active tab of a window that has focus. */

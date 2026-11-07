@@ -8,7 +8,7 @@ import { handleCtlCommand, type CtlHandlerDeps } from './ctl-handler.js';
 import { ctlError, type CtlResult } from '../shared/ctl-protocol.js';
 import type { ProviderId } from '../shared/types.js';
 import { getDetachedProjectId } from './session-window-state.js';
-import { focusSessionWindow } from './session-window.js';
+import { focusSessionWindow } from './session-window-handle.js';
 import { docForSession } from './reveal.js';
 
 const deps: CtlHandlerDeps = {
