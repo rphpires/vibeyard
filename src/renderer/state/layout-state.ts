@@ -43,9 +43,16 @@ export function sessionIdAtIndex(
 
 export type RemovalMode = 'all' | 'right' | 'left' | 'others';
 
-/** Collect the set of tab session ids targeted by a batch close (detached sessions are never included). */
-export function collectRemovalIds(project: ProjectRecord, mode: RemovalMode, anchorSessionId?: string): string[] {
-  const tabs = tabSessions(project);
+/**
+ * Collect the set of tab session ids targeted by a batch close (detached sessions are never
+ * included), relative to `tabs` (default: every tab of the project; a view passes its own tabs).
+ */
+export function collectRemovalIds(
+  project: ProjectRecord,
+  mode: RemovalMode,
+  anchorSessionId?: string,
+  tabs: SessionRecord[] = tabSessions(project),
+): string[] {
   if (mode === 'all') return tabs.map((s) => s.id);
   if (mode === 'others' && anchorSessionId) {
     return tabs.filter((s) => s.id !== anchorSessionId).map((s) => s.id);
@@ -75,4 +82,24 @@ export function reorderSessionInProject(project: ProjectRecord, sessionId: strin
       .map((s) => s.id);
   }
   return true;
+}
+
+/**
+ * The `toIndex` for reorderSessionInProject that drops `draggedId` right before (or, with
+ * `after`, right after) `targetId`. Counted in project.sessions with the dragged session lifted
+ * out, so tabs another view shows between the two stay where they are. Null for an unknown id
+ * or a self-drop.
+ */
+export function viewReorderIndex(
+  project: ProjectRecord,
+  draggedId: string,
+  targetId: string,
+  after: boolean,
+): number | null {
+  if (draggedId === targetId) return null;
+  if (!project.sessions.some((s) => s.id === draggedId)) return null;
+  const rest = project.sessions.filter((s) => s.id !== draggedId);
+  const targetIdx = rest.findIndex((s) => s.id === targetId);
+  if (targetIdx === -1) return null;
+  return after ? targetIdx + 1 : targetIdx;
 }

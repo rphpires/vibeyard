@@ -7,6 +7,7 @@ import {
   clearTabScrollState,
   _resetForTesting,
 } from './tab-scroll';
+import type { ViewKind } from '../../session-window-state';
 
 describe('scrollDelta', () => {
   it('stays put when the tab is fully inside the strip', () => {
@@ -41,11 +42,11 @@ describe('tab strip scroll state', () => {
    * `at` when the render starts, and an auto-scroll moves it to `autoScrollTo`.
    * Returns the plan the render acted on and where it left the strip.
    */
-  function render(project: string, session: string | null, at: number, autoScrollTo = at) {
-    bankScroll(at);
-    const plan = planScroll(project, session);
+  function render(project: string, session: string | null, at: number, autoScrollTo = at, kind: ViewKind = 'main') {
+    bankScroll(kind, at);
+    const plan = planScroll(kind, project, session);
     const settled = plan.autoScroll ? autoScrollTo : plan.scrollLeft;
-    commitScroll(project, session, settled, plan.autoScroll);
+    commitScroll(kind, project, session, settled, plan.autoScroll);
     return { ...plan, settled };
   }
 
@@ -95,9 +96,9 @@ describe('tab strip scroll state', () => {
 
   it('does not misattribute an offset banked with no project on screen', () => {
     render('p1', 's1', 0, 400);
-    bankScroll(400);                // render() with no active project: banks, then bails
+    bankScroll('main', 400);        // render() with no active project: banks, then bails
     expect(render('p2', 's9', 0, 700).scrollLeft).toBe(0);
-    expect(planScroll('p1', 's1').scrollLeft).toBe(400);
+    expect(planScroll('main', 'p1', 's1').scrollLeft).toBe(400);
   });
 
   it('forgets a removed project, and re-renders it from scratch if the id returns', () => {
@@ -111,5 +112,30 @@ describe('tab strip scroll state', () => {
     expect(render('p1', null, 0, 0).autoScroll).toBe(true);
     expect(render('p1', null, 50).autoScroll).toBe(false);
     expect(render('p1', 's1', 50, 300).autoScroll).toBe(true);
+  });
+
+  it('keeps each view strip for the same project apart', () => {
+    // The same project's tabs are split across both windows; each strip has its own offset.
+    render('p1', 's1', 0, 400, 'main');
+    render('p1', 's1', 120, 120, 'main');          // hand-scroll in the main window
+    render('p1', 's2', 0, 900, 'sessions');        // sessions window auto-scrolls
+    expect(render('p1', 's1', 120, 120, 'main')).toMatchObject({ scrollLeft: 120, autoScroll: false });
+    expect(render('p1', 's2', 900, 900, 'sessions')).toMatchObject({ scrollLeft: 900, autoScroll: true });
+  });
+
+  it('banks a hand-scroll into the view that rendered it, not the other one', () => {
+    render('p1', 's1', 0, 400, 'main');
+    render('p2', 's2', 0, 300, 'sessions');
+    render('p2', 's2', 50, 50, 'sessions');        // sessions strip hand-scrolled to 50
+    expect(planScroll('main', 'p1', 's1').scrollLeft).toBe(400);
+    expect(planScroll('sessions', 'p2', 's2').scrollLeft).toBe(50);
+  });
+
+  it('clearTabScrollState forgets a project in every view', () => {
+    render('p1', 's1', 0, 400, 'main');
+    render('p1', 's2', 0, 300, 'sessions');
+    clearTabScrollState('p1');
+    expect(planScroll('main', 'p1', 's1')).toMatchObject({ scrollLeft: 0, autoScroll: true });
+    expect(planScroll('sessions', 'p1', 's2')).toMatchObject({ scrollLeft: 0, autoScroll: true });
   });
 });

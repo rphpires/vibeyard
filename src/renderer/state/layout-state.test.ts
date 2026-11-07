@@ -256,3 +256,46 @@ describe('layout-state helpers scoped to a view\'s tabs', () => {
     expect(project.layout.splitPanes).toEqual([sessions[0].id, sessions[2].id]);
   });
 });
+
+describe('tab-bar view helpers (reorder / batch close within a view)', () => {
+  // project.sessions = [ov, a, kb, b, c]; a view showing only [a, b, c].
+  function viewProject() {
+    const { project, sessions } = addProjectWithSessions(5);
+    const [ov, a, kb, b, c] = sessions;
+    return { project, ov, a, kb, b, c, viewTabs: [a, b, c] };
+  }
+
+  it('viewReorderIndex drops before/after a target, counted in project.sessions', async () => {
+    const { viewReorderIndex, reorderSessionInProject } = await import('./layout-state.js');
+    const { project, ov, a, kb, b, c } = viewProject();
+    // Drop c before a: c lands where a is now (index 1), the other view's tabs stay put.
+    let to = viewReorderIndex(project, c.id, a.id, false)!;
+    reorderSessionInProject(project, c.id, to);
+    expect(project.sessions.map((s) => s.id)).toEqual([ov.id, c.id, a.id, kb.id, b.id]);
+    // Drop c after b: lands after b, and the main view's ov/kb keep their order.
+    to = viewReorderIndex(project, c.id, b.id, true)!;
+    reorderSessionInProject(project, c.id, to);
+    expect(project.sessions.map((s) => s.id)).toEqual([ov.id, a.id, kb.id, b.id, c.id]);
+    // Drop a after b (a sits before b): the removal shift is accounted for.
+    to = viewReorderIndex(project, a.id, b.id, true)!;
+    reorderSessionInProject(project, a.id, to);
+    expect(project.sessions.map((s) => s.id)).toEqual([ov.id, kb.id, b.id, a.id, c.id]);
+  });
+
+  it('viewReorderIndex is null for an unknown dragged or target id, or a self-drop', async () => {
+    const { viewReorderIndex } = await import('./layout-state.js');
+    const { project, a } = viewProject();
+    expect(viewReorderIndex(project, 'nope', a.id, false)).toBeNull();
+    expect(viewReorderIndex(project, a.id, 'nope', false)).toBeNull();
+    expect(viewReorderIndex(project, a.id, a.id, true)).toBeNull();
+  });
+
+  it('collectRemovalIds is restricted to the given tabs', async () => {
+    const { collectRemovalIds } = await import('./layout-state.js');
+    const { project, a, b, c, viewTabs } = viewProject();
+    expect(collectRemovalIds(project, 'all', undefined, viewTabs)).toEqual([a.id, b.id, c.id]);
+    expect(collectRemovalIds(project, 'others', b.id, viewTabs)).toEqual([a.id, c.id]);
+    expect(collectRemovalIds(project, 'right', a.id, viewTabs)).toEqual([b.id, c.id]);
+    expect(collectRemovalIds(project, 'left', c.id, viewTabs)).toEqual([a.id, b.id]);
+  });
+});

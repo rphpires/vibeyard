@@ -1,6 +1,12 @@
 // Scroll state and decisions for the tab strip, kept DOM-free so the whole
 // bank → plan → commit sequence can be unit-tested. tab-list.ts is left with
 // nothing but reading and writing the offset itself.
+//
+// Every tab bar view (the main window's and the sessions window's) has its own
+// strip, so all of this is kept per (view kind, project): one project's tabs can
+// be split across both windows, each strip scrolled on its own.
+
+import type { ViewKind } from '../../session-window-state.js';
 
 /** What the strip last did for one project. */
 interface TabScrollMemo {
@@ -21,15 +27,21 @@ export interface TabScrollPlan {
   autoScroll: boolean;
 }
 
-// Per-project, so switching away and back lands the strip where the user left it
-// rather than replaying one global offset onto a different set of tabs. Pruned on
-// 'project-removed' (see clearTabScrollState) rather than by walking the map on
-// the very chatty render path.
-const memos = new Map<string, TabScrollMemo>();
-// Which project's offset the strip is physically showing. Not derivable from
-// appState: render() runs on 'project-changed', by which point activeProject is
-// already the new project while the strip still holds the old one's offset.
-let renderedProjectId: string | null = null;
+// Per (view, project), so switching away and back lands the strip where the user
+// left it rather than replaying one global offset onto a different set of tabs.
+// Pruned on 'project-removed' (see clearTabScrollState) rather than by walking the
+// map on the very chatty render path.
+const memos = new Map<ViewKind, Map<string, TabScrollMemo>>();
+// Which project's offset each view's strip is physically showing. Not derivable
+// from appState: render() runs on 'project-changed', by which point activeProject
+// is already the new project while the strip still holds the old one's offset.
+const renderedProjectIds = new Map<ViewKind, string>();
+
+function memosFor(kind: ViewKind): Map<string, TabScrollMemo> {
+  let m = memos.get(kind);
+  if (!m) { m = new Map(); memos.set(kind, m); }
+  return m;
+}
 
 /**
  * How far to scroll the strip horizontally to bring a tab fully into view, 0 when
@@ -69,16 +81,17 @@ function shouldAutoScroll(memo: TabScrollMemo | undefined, sessionId: string | n
  * anything can return early — this is the only place a hand-scroll is observable,
  * including the one the user leaves behind on the way out of a project.
  */
-export function bankScroll(scrollLeft: number): void {
-  const memo = renderedProjectId ? memos.get(renderedProjectId) : undefined;
+export function bankScroll(kind: ViewKind, scrollLeft: number): void {
+  const rendered = renderedProjectIds.get(kind);
+  const memo = rendered ? memos.get(kind)?.get(rendered) : undefined;
   if (memo) memo.scrollLeft = scrollLeft;
   // The strip is about to be rebuilt; only a completed render re-claims it.
-  renderedProjectId = null;
+  renderedProjectIds.delete(kind);
 }
 
 /** Where to put this project's strip, and whether its active tab may pull it. */
-export function planScroll(projectId: string, sessionId: string | null): TabScrollPlan {
-  const memo = memos.get(projectId);
+export function planScroll(kind: ViewKind, projectId: string, sessionId: string | null): TabScrollPlan {
+  const memo = memos.get(kind)?.get(projectId);
   return { scrollLeft: memo?.scrollLeft ?? 0, autoScroll: shouldAutoScroll(memo, sessionId) };
 }
 
@@ -88,24 +101,28 @@ export function planScroll(projectId: string, sessionId: string | null): TabScro
  * a hand-scroll apart from a strip still sitting where we put it.
  */
 export function commitScroll(
+  kind: ViewKind,
   projectId: string,
   sessionId: string | null,
   scrollLeft: number,
   autoScrolled: boolean,
 ): void {
-  const memo = memos.get(projectId);
+  const viewMemos = memosFor(kind);
+  const memo = viewMemos.get(projectId);
   if (memo && !autoScrolled) memo.scrollLeft = scrollLeft;
-  else memos.set(projectId, { sessionId, autoScrollLeft: scrollLeft, scrollLeft });
-  renderedProjectId = projectId;
+  else viewMemos.set(projectId, { sessionId, autoScrollLeft: scrollLeft, scrollLeft });
+  renderedProjectIds.set(kind, projectId);
 }
 
-/** Drop a closed project's remembered offset. Wired to 'project-removed'. */
+/** Drop a closed project's remembered offset in every view. Wired to 'project-removed'. */
 export function clearTabScrollState(projectId: string): void {
-  memos.delete(projectId);
-  if (renderedProjectId === projectId) renderedProjectId = null;
+  for (const viewMemos of memos.values()) viewMemos.delete(projectId);
+  for (const [kind, rendered] of renderedProjectIds) {
+    if (rendered === projectId) renderedProjectIds.delete(kind);
+  }
 }
 
 export function _resetForTesting(): void {
   memos.clear();
-  renderedProjectId = null;
+  renderedProjectIds.clear();
 }

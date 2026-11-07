@@ -1,4 +1,4 @@
-// Tab-bar DOM refs shared across more than one module. Button refs that only
-// initTabBar touches stay local to index.ts.
-export const tabListEl = document.getElementById('tab-list')!;
+// Main-window-only tab-bar DOM ref shared across more than one module. The tab
+// list and buttons belong to a TabBarView (views.ts); the git status bar exists
+// only in the main window.
 export const gitStatusEl = document.getElementById('git-status')!;

@@ -80,11 +80,19 @@ export function closeTab(projectId: string, sessionId: string): void {
   appState.closeTabs(projectId, [sessionId]);
 }
 
-/** Close a group of tabs relative to an anchor (tab context menu), same rules as closeTab. */
-export function closeTabsByMode(projectId: string, mode: RemovalMode, anchorSessionId?: string): void {
+/**
+ * Close a group of tabs relative to an anchor (tab context menu), same rules as closeTab.
+ * `tabs` limits the group to the tabs one view shows (default: every tab of the project).
+ */
+export function closeTabsByMode(
+  projectId: string,
+  mode: RemovalMode,
+  anchorSessionId?: string,
+  tabs?: SessionRecord[],
+): void {
   const project = appState.projects.find((p) => p.id === projectId);
   if (!project) return;
-  appState.closeTabs(projectId, collectRemovalIds(project, mode, anchorSessionId));
+  appState.closeTabs(projectId, collectRemovalIds(project, mode, anchorSessionId, tabs));
 }
 
 function countActiveSessions(): number {

@@ -19,9 +19,10 @@ export function hideTabContextMenu(): void {
   }
 }
 
-// Clamp a menu so it stays within the viewport.
+// Clamp a menu so it stays within the viewport of the window it is shown in.
 export function positionMenu(menu: HTMLElement): void {
+  const win = menu.ownerDocument.defaultView ?? window;
   const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 4}px`;
-  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+  if (rect.right > win.innerWidth) menu.style.left = `${win.innerWidth - rect.width - 4}px`;
+  if (rect.bottom > win.innerHeight) menu.style.top = `${win.innerHeight - rect.height - 4}px`;
 }
