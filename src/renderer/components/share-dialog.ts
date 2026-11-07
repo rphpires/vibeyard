@@ -6,6 +6,7 @@ import { isSharing, isConnected } from '../sharing/peer-host.js';
 import { validatePin } from '../sharing/share-crypto.js';
 import { createPinInput } from '../dom-utils.js';
 import { bindModalDismiss } from './modal-manager.js';
+import { windowOf } from '../frame.js';
 
 let activeOverlay: HTMLElement | null = null;
 let activeDismiss: (() => void) | null = null;
@@ -106,7 +107,7 @@ export function showShareDialog(sessionId: string, doc: Document = document): vo
   copyOfferBtn.className = 'btn-secondary share-btn';
   copyOfferBtn.textContent = 'Copy Code';
   copyOfferBtn.addEventListener('click', () => {
-    (doc.defaultView ?? window).navigator.clipboard.writeText(offerTextarea.value);
+    windowOf(doc).navigator.clipboard.writeText(offerTextarea.value);
     copyOfferBtn.textContent = 'Copied!';
     setTimeout(() => { copyOfferBtn.textContent = 'Copy Code'; }, 1500);
   });

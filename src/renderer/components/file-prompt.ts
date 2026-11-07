@@ -5,6 +5,7 @@ import { getFileViewerInstance } from './file-viewer.js';
 import { getFileReaderInstance } from './file-reader.js';
 import { promptNewSession } from './tab-bar.js';
 import { wireSubmitDisabled } from './submit-disabled.js';
+import { ownerPromptOptions } from './browser-tab/owner.js';
 
 type PaneKind = 'file-viewer' | 'file-reader';
 
@@ -311,7 +312,7 @@ function submitToCustomSession(): void {
   promptNewSession((session) => {
     setPendingPrompt(session.id, composed.prompt);
     dismiss();
-  }, { projectId: appState.projectOfSession(composed.ctx.sessionId)?.id, doc: composed.ctx.paneEl.ownerDocument });
+  }, ownerPromptOptions(composed.ctx.sessionId, composed.ctx.paneEl));
 }
 
 function showBubbleForSelection(ctx: PaneContext): void {

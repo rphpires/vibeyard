@@ -2,6 +2,7 @@ import type { Terminal } from '@xterm/xterm';
 import { isMac } from '../platform.js';
 import { clipboardFor, copySelection, wrapBracketedPaste } from './terminal-utils.js';
 import { t } from '../i18n.js';
+import { windowOf } from '../frame.js';
 
 let activeMenu: HTMLElement | null = null;
 let menuDoc: Document = document;
@@ -38,7 +39,7 @@ export function showTerminalContextMenu(
   hideTerminalContextMenu();
 
   const doc = terminal.element?.ownerDocument ?? document;
-  const win = doc.defaultView ?? window;
+  const win = windowOf(doc);
   const menu = doc.createElement('div');
   menu.className = 'tab-context-menu';
   menu.style.left = `${x}px`;

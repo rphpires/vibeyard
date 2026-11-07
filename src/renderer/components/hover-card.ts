@@ -1,3 +1,5 @@
+import { windowOf } from '../frame.js';
+
 // One card per document (the session window is a second Document). The card
 // lives in the document of the element it is anchored to.
 const cards = new WeakMap<Document, HTMLDivElement>();
@@ -19,7 +21,7 @@ function ensureCard(doc: Document): HTMLDivElement {
 
 function show(target: HTMLElement, content: string): void {
   const doc = target.ownerDocument;
-  const win = doc.defaultView ?? window;
+  const win = windowOf(doc);
   if (activeDoc && activeDoc !== doc) hide();
   activeDoc = doc;
   const card = ensureCard(doc);

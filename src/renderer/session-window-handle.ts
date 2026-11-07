@@ -9,6 +9,8 @@
  * handle and re-exports these functions.
  */
 
+import type { ViewKind } from '../shared/session-window.js';
+
 export interface SessionWindowHandle {
   win: Window;
   doc: Document;
@@ -48,15 +50,11 @@ export function getSessionWindowDocument(): Document | null {
   return live && isHandleAlive(live) ? live.doc : null;
 }
 
-export function isSessionWindowOpen(): boolean {
-  return live !== null;
-}
-
 /**
  * The window a document belongs to: 'sessions' for the open sessions window's
  * document, else 'main'. Lets a listener on a pane's own document (a webview's
  * `before-input-event`, a selection) dispatch with the right command source.
  */
-export function viewKindOfDocument(doc: Document): 'main' | 'sessions' {
+export function viewKindOfDocument(doc: Document): ViewKind {
   return live !== null && doc === live.doc ? 'sessions' : 'main';
 }

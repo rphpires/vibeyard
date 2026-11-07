@@ -8,7 +8,7 @@
  * on the tab the main view shows — for the detached project, that is the main view's
  * own selection of Overview/Kanban/Team, never one of the sessions window's tabs.
  */
-import { appState, type SessionRecord } from './state.js';
+import { appState, type NavTarget, type SessionRecord } from './state.js';
 import {
   currentCommandSource,
   getDetachedProjectId,
@@ -18,42 +18,39 @@ import {
 } from './session-window-state.js';
 import { focusSessionWindow, getSessionWindowDocument, isSessionWindowFocused } from './session-window-handle.js';
 
-/** The window a native-menu click came from. */
-export type CommandSource = 'main' | 'sessions';
-
 /**
  * The view a command acts on: `source` when given (a menu click), else the window of
  * the key press being handled, else the focused window.
  */
-export function commandTargetView(source?: CommandSource): ViewKind {
+export function commandTargetView(source?: ViewKind): ViewKind {
   if (!getDetachedProjectId()) return 'main';
   const from = source ?? currentCommandSource();
   if (from) return from;
   return isSessionWindowFocused() ? 'sessions' : 'main';
 }
 
-export function commandTargetProjectId(source?: CommandSource): string | null {
+export function commandTargetProjectId(source?: ViewKind): string | null {
   return commandTargetView(source) === 'sessions' ? getDetachedProjectId() : appState.activeProjectId;
 }
 
 /** The tab the target view shows as active in the target project. */
-export function commandTargetSession(source?: CommandSource): SessionRecord | undefined {
-  const projectId = commandTargetProjectId(source);
-  const project = appState.projects.find((p) => p.id === projectId);
+export function commandTargetSession(source?: ViewKind): SessionRecord | undefined {
+  const project = appState.getProject(commandTargetProjectId(source));
   if (!project) return undefined;
   const id = viewActiveSessionId(commandTargetView(source), project);
   return id ? project.sessions.find((s) => s.id === id) : undefined;
 }
 
 /** The document of the target view's window (for dialogs and blur). */
-export function commandTargetDoc(source?: CommandSource): Document {
+export function commandTargetDoc(source?: ViewKind): Document {
   return (commandTargetView(source) === 'sessions' && getSessionWindowDocument()) || document;
 }
 
 /** The document of the window that shows this session's tab. */
 export function docForSession(projectId: string, sessionId: string): Document {
-  const session = appState.projects.find((p) => p.id === projectId)?.sessions.find((s) => s.id === sessionId);
-  return (session && viewShowsSession('sessions', projectId, session) && getSessionWindowDocument()) || document;
+  const found = appState.findSessionWithProject(sessionId);
+  const inSessionsWindow = found?.project.id === projectId && viewShowsSession('sessions', projectId, found.session);
+  return (inSessionsWindow && getSessionWindowDocument()) || document;
 }
 
 /**
@@ -62,7 +59,7 @@ export function docForSession(projectId: string, sessionId: string): Document {
  * main window forward first — through `app:focus` (restore + focus with steal), since
  * `window.focus()` does not reliably raise a window on Windows.
  */
-export function runInMainWindow(fn: () => void, source?: CommandSource): void {
+export function runInMainWindow(fn: () => void, source?: ViewKind): void {
   if (commandTargetView(source) === 'sessions') window.vibeyard.app.focus();
   fn();
 }
@@ -73,9 +70,8 @@ export function runInMainWindow(fn: () => void, source?: CommandSource): void {
  * switches the main window to its project, as before.
  */
 export function revealSession(projectId: string, sessionId: string): void {
-  const project = appState.projects.find((p) => p.id === projectId);
-  const session = project?.sessions.find((s) => s.id === sessionId);
-  if (!project || !session) return;
+  const session = appState.getProject(projectId)?.sessions.find((s) => s.id === sessionId);
+  if (!session) return;
   if (viewShowsSession('sessions', projectId, session)) {
     appState.setActiveSession(projectId, sessionId);
     focusSessionWindow();
@@ -98,10 +94,10 @@ export function focusIfInSessionWindow(projectId: string, session: SessionRecord
  * After a Back/Forward step (which already selected the tab, without touching nav
  * history): a tab of the sessions window brings that window forward.
  */
-export function revealNavTarget(target: { projectId: string; sessionId: string } | undefined): void {
+export function revealNavTarget(target: NavTarget | undefined): void {
   if (!target) return;
-  const session = appState.projects.find((p) => p.id === target.projectId)?.sessions.find((s) => s.id === target.sessionId);
-  if (session && viewShowsSession('sessions', target.projectId, session)) focusSessionWindow();
+  const found = appState.findSessionWithProject(target.sessionId);
+  if (found?.project.id === target.projectId) focusIfInSessionWindow(target.projectId, found.session);
 }
 
 /** Resume a history entry and show the tab where it lands (revealSession). */

@@ -17,7 +17,7 @@ import { DomSearchBackend } from './components/dom-search-backend.js';
 import { toggleInspector } from './components/session-inspector.js';
 import { zoomIn, zoomOut, zoomReset } from './zoom.js';
 import { getBrowserTabInstance } from './components/browser-tab/instance.js';
-import { runWithCommandSource, viewOwnsLayout, viewShowsSession } from './session-window-state.js';
+import { runWithCommandSource, viewOwnsLayout, viewShowsSession, type ViewKind } from './session-window-state.js';
 import { isCliSession } from './session-utils.js';
 import {
   commandTargetDoc,
@@ -26,47 +26,46 @@ import {
   commandTargetView,
   revealNavTarget,
   runInMainWindow,
-  type CommandSource,
 } from './reveal.js';
 
 export function initKeybindings(): void {
   // Session commands act on the window they came from: a native-menu click carries its
   // window as `source`; a key press has none and goes by which window has focus (the
   // sessions window forwards its keydown here). See reveal.ts.
-  const target = (source?: CommandSource) => ({
+  const target = (source?: ViewKind) => ({
     projectId: commandTargetProjectId(source),
     view: commandTargetView(source),
   });
-  const newSession = (source?: CommandSource): void => {
+  const newSession = (source?: ViewKind): void => {
     const projectId = commandTargetProjectId(source);
     if (projectId) quickNewSession(projectId, commandTargetDoc(source));
   };
-  const closeSession = (source?: CommandSource): void => {
+  const closeSession = (source?: ViewKind): void => {
     const projectId = commandTargetProjectId(source);
     const session = commandTargetSession(source);
     if (projectId && session) closeTab(projectId, session.id);
   };
-  const cycle = (direction: 1 | -1, source?: CommandSource): void => {
+  const cycle = (direction: 1 | -1, source?: ViewKind): void => {
     const { projectId, view } = target(source);
     if (projectId) appState.cycleSession(direction, projectId, view);
   };
-  const gotoIndex = (index: number, source?: CommandSource): void => {
+  const gotoIndex = (index: number, source?: ViewKind): void => {
     const { projectId, view } = target(source);
     if (projectId) appState.gotoSession(index, projectId, view);
   };
-  const toggleSwarm = (source?: CommandSource): void => {
+  const toggleSwarm = (source?: ViewKind): void => {
     const { projectId, view } = target(source);
     if (!projectId || !viewOwnsLayout(view, projectId)) return;
     appState.toggleSwarm(projectId);
   };
   // The session inspector panel lives in the main window only.
-  const inspector = (source?: CommandSource): void => {
+  const inspector = (source?: ViewKind): void => {
     if (commandTargetView(source) === 'sessions') return;
     const session = commandTargetSession(source);
     if (session) toggleInspector(session.id);
   };
   /** A main-window-only command: run it there, bringing that window forward if needed. */
-  const inMain = (fn: () => void) => (source?: CommandSource): void => runInMainWindow(fn, source);
+  const inMain = (fn: () => void) => (source?: ViewKind): void => runInMainWindow(fn, source);
 
   // Menu IPC listeners — handle clicks on Electron menu items.
   // Accelerators are display-only (registerAccelerator: false), so these
@@ -84,7 +83,7 @@ export function initKeybindings(): void {
   // Register shortcut handlers — the single authority for keyboard shortcuts.
   shortcutManager.registerHandler('new-session', () => newSession());
   shortcutManager.registerHandler('new-session-alt', () => newSession());
-  shortcutManager.registerHandler('new-project', () => inMain(promptNewProject)());
+  shortcutManager.registerHandler('new-project', () => runInMainWindow(promptNewProject));
   for (let i = 1; i <= 9; i++) {
     shortcutManager.registerHandler(`goto-session-${i}`, () => gotoIndex(i - 1));
   }
@@ -92,14 +91,14 @@ export function initKeybindings(): void {
   shortcutManager.registerHandler('prev-session', () => cycle(-1));
   shortcutManager.registerHandler('tab-back', () => revealNavTarget(appState.navigateBack()));
   shortcutManager.registerHandler('tab-forward', () => revealNavTarget(appState.navigateForward()));
-  shortcutManager.registerHandler('toggle-sidebar', () => inMain(toggleSidebar)());
+  shortcutManager.registerHandler('toggle-sidebar', () => runInMainWindow(toggleSidebar));
   shortcutManager.registerHandler('toggle-split', () => toggleSwarm());
-  shortcutManager.registerHandler('project-terminal', () => inMain(toggleProjectTerminal)());
-  shortcutManager.registerHandler('project-terminal-alt', () => inMain(toggleProjectTerminal)());
-  shortcutManager.registerHandler('debug-panel', () => inMain(toggleDebugPanel)());
-  shortcutManager.registerHandler('git-panel', () => inMain(toggleGitPanel)());
-  shortcutManager.registerHandler('quick-open', () => inMain(showQuickOpen)());
-  shortcutManager.registerHandler('session-search', () => inMain(showSessionSearchPalette)());
+  shortcutManager.registerHandler('project-terminal', () => runInMainWindow(toggleProjectTerminal));
+  shortcutManager.registerHandler('project-terminal-alt', () => runInMainWindow(toggleProjectTerminal));
+  shortcutManager.registerHandler('debug-panel', () => runInMainWindow(toggleDebugPanel));
+  shortcutManager.registerHandler('git-panel', () => runInMainWindow(toggleGitPanel));
+  shortcutManager.registerHandler('quick-open', () => runInMainWindow(showQuickOpen));
+  shortcutManager.registerHandler('session-search', () => runInMainWindow(showSessionSearchPalette));
   shortcutManager.registerHandler('find-in-terminal', () => {
     // The project shell lives in the main window. Its document keeps an activeElement
     // after the sessions window takes focus, so only a key pressed in main counts.
@@ -133,11 +132,10 @@ export function initKeybindings(): void {
       // across windows, so otherwise the target view's own active CLI tab (and nothing
       // when that tab is not a terminal: a focused pane outside the view is the other window's).
       const focused = getFocusedSessionId();
-      const project = appState.projects.find((p) => p.id === commandTargetProjectId());
-      const focusedTab = focused ? project?.sessions.find((s) => s.id === focused) : undefined;
-      const sessionId = focusedTab && viewShowsSession(commandTargetView(), project!.id, focusedTab)
-        ? focusedTab.id
-        : isCliSession(session) ? session.id : undefined;
+      const found = focused ? appState.findSessionWithProject(focused) : undefined;
+      const focusedInView = found?.project.id === commandTargetProjectId() &&
+        viewShowsSession(commandTargetView(), found.project.id, found.session);
+      const sessionId = focusedInView ? found!.session.id : isCliSession(session) ? session.id : undefined;
       if (sessionId) showSearchBar(sessionId, TerminalSearchBackend(sessionId));
     }
   });
@@ -147,7 +145,7 @@ export function initKeybindings(): void {
       showGoToLineBar(session.id);
     }
   });
-  shortcutManager.registerHandler('help', () => inMain(() => showPreferencesModal('help'))());
+  shortcutManager.registerHandler('help', () => runInMainWindow(() => showPreferencesModal('help')));
   shortcutManager.registerHandler('close-session', () => closeSession());
   shortcutManager.registerHandler('toggle-inspector', () => inspector());
   shortcutManager.registerHandler('zoom-in', zoomIn);

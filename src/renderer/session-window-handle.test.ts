@@ -7,7 +7,6 @@ import {
   focusSessionWindow,
   isSessionWindowFocused,
   getSessionWindowDocument,
-  isSessionWindowOpen,
   viewKindOfDocument,
 } from './session-window-handle.js';
 
@@ -29,7 +28,6 @@ beforeEach(() => {
 
 describe('session-window-handle', () => {
   it('reports nothing and focuses nothing while no window is open', () => {
-    expect(isSessionWindowOpen()).toBe(false);
     expect(getSessionWindowDocument()).toBeNull();
     expect(isSessionWindowFocused()).toBe(false);
     focusSessionWindow();
@@ -39,7 +37,6 @@ describe('session-window-handle', () => {
   it('answers for the open window, and drops a document that lost its root', () => {
     const h = handle();
     setSessionWindowHandle(h);
-    expect(isSessionWindowOpen()).toBe(true);
     expect(getSessionWindowDocument()).toBe(h.doc);
     focusSessionWindow();
     expect(focus).toHaveBeenCalledTimes(1);

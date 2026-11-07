@@ -9,6 +9,8 @@ const handlers: Record<string, (data?: unknown) => void> = {};
 const fakeState = {
   projects: [] as Array<Record<string, unknown>>,
   activeProject: undefined as Record<string, unknown> | undefined,
+  get activeProjectId() { return (this.activeProject?.id as string | undefined) ?? null; },
+  getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
   profiles: [] as Array<{ id: string; providerId: string; configDir: string }>,
   on: vi.fn((event: string, cb: (data?: unknown) => void) => { handlers[event] = cb; }),
   setActiveSession: vi.fn(),

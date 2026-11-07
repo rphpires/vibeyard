@@ -8,7 +8,7 @@ import { getDetachedProjectId, viewActiveSessionId } from './session-window-stat
 function isSeen(sessionId: string): boolean {
   const active = appState.activeProject;
   if (document.hasFocus() && active && viewActiveSessionId('main', active) === sessionId) return true;
-  const detached = appState.projects.find((p) => p.id === getDetachedProjectId());
+  const detached = appState.getProject(getDetachedProjectId());
   return !!detached && isSessionWindowFocused() && viewActiveSessionId('sessions', detached) === sessionId;
 }
 

@@ -30,10 +30,11 @@ import {
 import { NavHistory } from './state/nav-history.js';
 import {
   getDetachedProjectId,
-  isProjectLevelSession,
+  isMainViewTabOfDetached,
   setMainViewSelection,
   viewActiveSessionId,
   viewKindFor,
+  viewKindOfProject,
   viewShowsSession,
   viewTabs,
   type ViewKind,
@@ -244,6 +245,11 @@ class AppState {
 
   get activeProject(): ProjectRecord | undefined {
     return this.state.projects.find((p) => p.id === this.state.activeProjectId);
+  }
+
+  /** The project with this id (undefined for no id or an unknown one). */
+  getProject(id: string | null | undefined): ProjectRecord | undefined {
+    return id ? this.state.projects.find((p) => p.id === id) : undefined;
   }
 
   get activeSession(): SessionRecord | undefined {
@@ -558,7 +564,7 @@ class AppState {
    */
   private selectTab(project: ProjectRecord, sessionId: string): void {
     const session = project.sessions.find((s) => s.id === sessionId);
-    if (project.id === getDetachedProjectId() && session && isProjectLevelSession(session)) {
+    if (session && isMainViewTabOfDetached(project.id, session)) {
       setMainViewSelection(sessionId);
     } else {
       project.activeSessionId = sessionId;
@@ -569,7 +575,7 @@ class AppState {
   private attachTab(project: ProjectRecord, session: SessionRecord, opts?: { addToSwarm?: boolean }): void {
     const previous = project.activeSessionId;
     attachSessionToProject(project, session, opts);
-    if (project.id === getDetachedProjectId() && isProjectLevelSession(session)) {
+    if (isMainViewTabOfDetached(project.id, session)) {
       project.activeSessionId = previous;
       setMainViewSelection(session.id);
     }
@@ -1229,7 +1235,7 @@ class AppState {
   toggleSwarm(projectId?: string): void {
     const project = this.projectOrActive(projectId);
     if (!project) return;
-    toggleSwarmMode(project, viewTabs(project.id === getDetachedProjectId() ? 'sessions' : 'main', project));
+    toggleSwarmMode(project, viewTabs(viewKindOfProject(project.id), project));
     this.persist();
     this.emit('layout-changed');
   }
@@ -1256,13 +1262,13 @@ class AppState {
   }
 
   private projectOrActive(projectId?: string): ProjectRecord | undefined {
-    return projectId ? this.state.projects.find((p) => p.id === projectId) : this.activeProject;
+    return projectId ? this.getProject(projectId) : this.activeProject;
   }
 
   private viewTarget(projectId?: string, view?: ViewKind): { project: ProjectRecord; kind: ViewKind } | undefined {
     const project = this.projectOrActive(projectId);
     if (!project) return undefined;
-    const kind = view ?? (projectId && projectId === getDetachedProjectId() ? 'sessions' : 'main');
+    const kind = view ?? (projectId ? viewKindOfProject(projectId) : 'main');
     return { project, kind };
   }
 

@@ -17,7 +17,7 @@ import { focusIfInSessionWindow } from '../../reveal.js';
 
 /** The project with this id, or the active project when no id is given. */
 function projectById(projectId?: string): ProjectRecord | undefined {
-  return projectId ? appState.projects.find((p) => p.id === projectId) : appState.activeProject;
+  return projectId ? appState.getProject(projectId) : appState.activeProject;
 }
 
 /**

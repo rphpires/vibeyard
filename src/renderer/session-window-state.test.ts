@@ -7,7 +7,7 @@ import {
   viewShowsSession,
   viewTabs,
   projectIdForView,
-  PROJECT_LEVEL_TAB_TYPES,
+  isProjectLevelSession,
   setMainViewSelection,
   viewActiveSessionId,
   viewKindFor,
@@ -23,8 +23,9 @@ function sess(id: string, type?: SessionType, detached = false): SessionRecord {
 describe('session-window-state', () => {
   beforeEach(() => _resetForTesting());
 
-  it('exposes project-level tab types', () => {
-    expect([...PROJECT_LEVEL_TAB_TYPES]).toEqual(['project-tab', 'kanban', 'team']);
+  it('treats Overview, Kanban and Team as project-level tabs', () => {
+    for (const t of ['project-tab', 'kanban', 'team'] as const) expect(isProjectLevelSession(sess('a', t))).toBe(true);
+    for (const t of [undefined, 'file-reader', 'browser-tab'] as const) expect(isProjectLevelSession(sess('a', t))).toBe(false);
   });
 
   it('without a detached project the main view shows everything', () => {

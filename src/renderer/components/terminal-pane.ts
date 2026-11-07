@@ -11,7 +11,7 @@ import type { ProviderId } from '../types.js';
 import { getProviderCapabilities } from '../provider-availability.js';
 import { appState } from '../state.js';
 import { FilePathLinkProvider, GithubLinkProvider } from './terminal-link-provider.js';
-import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, wrapBracketedPaste } from './terminal-utils.js';
+import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, moveOpenedTerminal, wrapBracketedPaste } from './terminal-utils.js';
 import type { WebglAddon } from '@xterm/addon-webgl';
 import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE } from '../drag-types.js';
 import { showTerminalContextMenu } from './terminal-context-menu.js';
@@ -373,11 +373,7 @@ export function attachToContainer(sessionId: string, container: HTMLElement): vo
     collapseArmedTextareaOnContextMenu(instance.terminal);
     instance.webgl = loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
-    const previousDoc = instance.element.ownerDocument;
-    container.appendChild(instance.element);
-    // Moving into another window's document (the sessions window): xterm only
-    // rebinds to the new window when open() runs again after the move.
-    if (container.ownerDocument !== previousDoc) instance.terminal.open(xtermWrap as HTMLElement);
+    moveOpenedTerminal(instance.element, container, instance.terminal, xtermWrap as HTMLElement);
   }
 }
 

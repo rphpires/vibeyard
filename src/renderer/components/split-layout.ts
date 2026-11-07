@@ -94,9 +94,9 @@ import { isCliSession, sessionLocation } from '../session-utils.js';
 import { isInRelativeOrder } from './pane-order.js';
 import { shouldFocusPane, type PaneFocusMemo } from './pane-focus.js';
 import {
-  getDetachedProjectId,
-  projectIdForView,
+  projectForViewKind,
   viewActiveSessionId,
+  viewOwnsLayout,
   viewShowsSession,
   viewTabs,
   type ViewKind,
@@ -166,14 +166,13 @@ export function destroyLayoutView(view: LayoutView): void {
  */
 export function evacuateLayoutView(view: LayoutView, target: HTMLElement): void {
   hideViewPanes(view);
-  for (const project of appState.projects) {
-    for (const session of project.sessions) {
-      const el = paneElementFor(session);
-      if (!el || !view.container.contains(el)) continue;
-      // Attach only (no show*): the pane stays hidden as hideViewPanes left it.
-      (paneAttachFor[session.type ?? ''] ?? attachToContainer)(session.id, target);
-      if (isCliSession(session)) reloadWebgl(session.id);
-    }
+  // Only the project this view shows has panes in it.
+  for (const session of projectForView(view)?.sessions ?? []) {
+    const el = paneElementFor(session);
+    if (!el || !view.container.contains(el)) continue;
+    // Attach only (no show*): the pane stays hidden as hideViewPanes left it.
+    (paneAttachFor[session.type ?? ''] ?? attachToContainer)(session.id, target);
+    if (isCliSession(session)) reloadWebgl(session.id);
   }
   removeSwarmWrapper(view);
   removeEmptyState(view);
@@ -184,13 +183,12 @@ export function evacuateLayoutView(view: LayoutView, target: HTMLElement): void 
 
 /** The project a view shows right now. */
 function projectForView(view: LayoutView): ProjectRecord | undefined {
-  const id = projectIdForView(view.kind, appState.activeProject?.id ?? null);
-  return id ? appState.projects.find((p) => p.id === id) : undefined;
+  return projectForViewKind(view.kind, appState);
 }
 
 /** `project.layout` belongs to the view with its sessions; the main view of a detached project is always tabs. */
 function layoutModeFor(view: LayoutView, project: ProjectRecord): ProjectRecord['layout']['mode'] {
-  return view.kind === 'main' && project.id === getDetachedProjectId() ? 'tabs' : project.layout.mode;
+  return viewOwnsLayout(view.kind, project.id) ? project.layout.mode : 'tabs';
 }
 
 /** What one renderView() works from. */
@@ -275,9 +273,13 @@ function removeSwarmWrapper(view: LayoutView): void {
   view.container.querySelector('.swarm-grid-wrapper')?.remove();
 }
 
-/** Hide every pane inside this view's container — never another view's. */
+/**
+ * Hide every pane inside this view's container — never another view's. With a single
+ * view registered (no sessions window) every pane is its own: hide them all without
+ * a contains() walk per pane.
+ */
 function hideViewPanes(view: LayoutView): void {
-  const within = view.container;
+  const within = views.size > 1 ? view.container : undefined;
   hideAllPanes(within);
   hideAllInspectorPanes(within);
   hideAllFileViewerPanes(within);
@@ -335,7 +337,7 @@ function onSessionAdded(data: unknown): void {
   // Resolve the session's own project, not the active one: external control
   // (vibeyard-ctl new-session) adds sessions to projects that are not in focus,
   // and the pane must get that project's cwd/id and its pending prompt.
-  const project = appState.projects.find((p) => p.id === projectId);
+  const project = appState.getProject(projectId);
   if (!project) return;
   // Only projects some view shows are laid out. A pane for a background project is
   // created hidden and detached; renderLayout attaches it when the project is shown.
@@ -439,7 +441,7 @@ export function renderView(view: LayoutView): void {
 
   // The main view of the detached project with none of its own tabs selected: its
   // sessions run in the other window, so say so instead of "no sessions".
-  if (project && view.kind === 'main' && project.id === getDetachedProjectId() && !viewActiveSessionId('main', project)) {
+  if (project && !viewOwnsLayout(view.kind, project.id) && !viewActiveSessionId(view.kind, project)) {
     hideViewPanes(view);
     setContainerClass(view, '');
     showDetachedPlaceholder(view);
@@ -504,8 +506,9 @@ export function renderView(view: LayoutView): void {
 
   hideViewPanes(view);
 
-  const r: ViewRender = { view, project, tabs, panes: panesForView(view, project) };
   const mode = layoutModeFor(view, project);
+  // Tab mode never reads the split/swarm panes.
+  const r: ViewRender = { view, project, tabs, panes: mode === 'tabs' ? [] : panesForView(view, project) };
   if (mode === 'swarm' && r.panes.length >= 1) {
     renderSwarmMode(r); // owns the grid wrapper, including dropping it
   } else {
@@ -753,6 +756,12 @@ function showEmptyState(view: LayoutView, project: ProjectRecord | undefined): v
 
 /** Main window, detached project: "its sessions are in the other window" + Show / Bring back. */
 function showDetachedPlaceholder(view: LayoutView): void {
+  // Already shown: refresh its text (the locale may have changed), keep the nodes.
+  const shown = view.container.querySelector<HTMLElement>('.session-window-placeholder');
+  if (shown) {
+    setDetachedPlaceholderText(shown);
+    return;
+  }
   removeEmptyState(view);
   const doc = view.doc;
   const el = doc.createElement('div');
@@ -760,22 +769,26 @@ function showDetachedPlaceholder(view: LayoutView): void {
 
   const title = doc.createElement('div');
   title.className = 'empty-state-title';
-  title.textContent = t('sessionWindow.placeholder');
 
   const actions = doc.createElement('div');
   actions.className = 'session-window-placeholder-actions';
   const show = doc.createElement('button');
   show.className = 'btn-primary';
-  show.textContent = t('sessionWindow.show');
   show.addEventListener('click', () => focusSessionWindow());
   const back = doc.createElement('button');
   back.className = 'btn-secondary';
-  back.textContent = t('sessionWindow.bringBack');
   back.addEventListener('click', () => closeSessionWindow());
   actions.append(show, back);
 
   el.append(title, actions);
+  setDetachedPlaceholderText(el);
   view.container.appendChild(el);
+}
+
+function setDetachedPlaceholderText(el: HTMLElement): void {
+  el.querySelector('.empty-state-title')!.textContent = t('sessionWindow.placeholder');
+  el.querySelector('.btn-primary')!.textContent = t('sessionWindow.show');
+  el.querySelector('.btn-secondary')!.textContent = t('sessionWindow.bringBack');
 }
 
 function removeEmptyState(view: LayoutView): void {

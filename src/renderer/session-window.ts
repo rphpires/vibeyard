@@ -17,7 +17,7 @@
  */
 import { appState } from './state.js';
 import { SESSION_WINDOW_FRAME } from '../shared/session-window.js';
-import { getDetachedProjectId, runWithCommandSource, setDetachedProjectId, setMainViewSelection } from './session-window-state.js';
+import { getDetachedProjectId, runWithCommandSource, setDetachedProjectId } from './session-window-state.js';
 import {
   createLayoutView,
   destroyLayoutView,
@@ -29,32 +29,26 @@ import {
   buildTabBarDom,
   createTabBarView,
   destroyTabBarView,
-  renderTabBars,
   type TabBarView,
 } from './components/tab-bar.js';
 import { fitAllVisible } from './components/terminal-pane.js';
 import { attachFilePrompt } from './components/file-prompt.js';
 import { installDocChrome } from './doc-chrome.js';
+import { requestFrameIn } from './frame.js';
 import { shortcutManager } from './shortcuts.js';
 import { t } from './i18n.js';
 import {
   focusSessionWindow,
   isHandleAlive,
   setSessionWindowHandle,
+  type SessionWindowHandle,
 } from './session-window-handle.js';
 
-// The light queries live in session-window-handle.ts (no layout imports); re-exported here.
-export {
-  focusSessionWindow,
-  isSessionWindowFocused,
-  getSessionWindowDocument,
-  isSessionWindowOpen,
-} from './session-window-handle.js';
+// The light queries live in session-window-handle.ts (no layout imports); split-layout
+// reaches focusSessionWindow through here.
+export { focusSessionWindow } from './session-window-handle.js';
 
-interface OpenWindow {
-  win: Window;
-  doc: Document;
-  root: HTMLElement;
+interface OpenWindow extends SessionWindowHandle {
   layout: LayoutView;
   tabBar: TabBarView;
   dispose: () => void;
@@ -79,11 +73,6 @@ function mainContainer(): HTMLElement {
   return document.getElementById('terminal-container')!;
 }
 
-/** Still the window (and document) we built? A closed or re-navigated one is gone. */
-function isAlive(w: OpenWindow): boolean {
-  return isHandleAlive(w);
-}
-
 function setCurrent(w: OpenWindow | null): void {
   current = w;
   setSessionWindowHandle(w);
@@ -91,7 +80,7 @@ function setCurrent(w: OpenWindow | null): void {
 
 function updateTitle(): void {
   if (!current) return;
-  const project = appState.projects.find((p) => p.id === getDetachedProjectId());
+  const project = appState.getProject(getDetachedProjectId());
   if (!project) return;
   const title = `${project.name} — Vibeyard`;
   // project-changed fires for every project edit: send the IPC only on a real change.
@@ -113,9 +102,8 @@ function teardown(): void {
   destroyLayoutView(w.layout);
   destroyTabBarView(w.tabBar);
   w.dispose();
-  setDetachedProjectId(null);
+  setDetachedProjectId(null); // its listeners re-render the tab bars
   renderLayout();
-  renderTabBars();
 }
 
 /**
@@ -158,7 +146,7 @@ function build(win: Window): OpenWindow {
 
   // Fits run on the child's frames: a hidden/minimized main window stops its own.
   const scheduleFit = (): void => {
-    win.requestAnimationFrame(() => { if (isAlive(w)) fitAllVisible(doc); });
+    requestFrameIn(doc, () => { if (isHandleAlive(w)) fitAllVisible(doc); });
   };
   // Shortcuts pressed here act on this window's project (see reveal.ts).
   const onKeydown = (e: KeyboardEvent): void => {
@@ -194,13 +182,12 @@ function build(win: Window): OpenWindow {
 }
 
 /**
- * Mark `projectId` detached. If its active tab is one the main window keeps (Overview,
- * Kanban, Team), the main view goes on showing it: its selection starts there.
+ * Mark `projectId` detached (its listeners re-render the tab bars). If its active tab
+ * is one the main window keeps (Overview, Kanban, Team), the main view goes on showing
+ * it: its selection starts there.
  */
 function detach(projectId: string): void {
-  setDetachedProjectId(projectId);
-  const project = appState.projects.find((p) => p.id === projectId);
-  setMainViewSelection(project?.activeSessionId ?? null);
+  setDetachedProjectId(projectId, appState.getProject(projectId)?.activeSessionId ?? null);
 }
 
 /**
@@ -209,16 +196,15 @@ function detach(projectId: string): void {
  * window (hidden) and this one's move in.
  */
 export function openSessionWindow(projectId: string): void {
-  if (!appState.projects.some((p) => p.id === projectId)) return;
+  if (!appState.getProject(projectId)) return;
 
-  if (current && !isAlive(current)) teardownAndClose();
+  if (current && !isHandleAlive(current)) teardownAndClose();
 
   if (current) {
     if (getDetachedProjectId() !== projectId) {
       evacuateLayoutView(current.layout, mainContainer());
       detach(projectId);
       renderLayout();
-      renderTabBars();
     }
     updateTitle();
     focusSessionWindow();
@@ -242,7 +228,6 @@ export function openSessionWindow(projectId: string): void {
   setCurrent(build(win));
   detach(projectId);
   renderLayout();
-  renderTabBars();
   updateTitle();
 }
 

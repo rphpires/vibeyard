@@ -5,6 +5,7 @@ import { appState } from '../state.js';
 import { DecryptionError, validatePin } from '../sharing/share-crypto.js';
 import { createPinInput } from '../dom-utils.js';
 import { bindModalDismiss } from './modal-manager.js';
+import { windowOf } from '../frame.js';
 
 let activeOverlay: HTMLElement | null = null;
 let activeDismiss: (() => void) | null = null;
@@ -20,7 +21,7 @@ export function showJoinDialog(opts: JoinDialogOptions = {}): void {
   closeJoinDialog();
 
   const doc = opts.doc ?? document;
-  const project = opts.projectId ? appState.projects.find((p) => p.id === opts.projectId) : appState.activeProject;
+  const project = opts.projectId ? appState.getProject(opts.projectId) : appState.activeProject;
   if (!project) return;
 
   const overlay = doc.createElement('div');
@@ -83,7 +84,7 @@ export function showJoinDialog(opts: JoinDialogOptions = {}): void {
   copyAnswerBtn.className = 'btn-secondary share-btn';
   copyAnswerBtn.textContent = 'Copy Response';
   copyAnswerBtn.addEventListener('click', () => {
-    (doc.defaultView ?? window).navigator.clipboard.writeText(answerTextarea.value);
+    windowOf(doc).navigator.clipboard.writeText(answerTextarea.value);
     copyAnswerBtn.textContent = 'Copied!';
     setTimeout(() => { copyAnswerBtn.textContent = 'Copy Response'; }, 1500);
   });

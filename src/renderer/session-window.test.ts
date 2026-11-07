@@ -9,6 +9,7 @@ const handlers: Record<string, Array<(data?: unknown) => void>> = {};
 const fakeState = {
   projects: [] as Array<{ id: string; name: string; sessions: unknown[] }>,
   activeProjectId: 'A' as string | null,
+  getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
   on: vi.fn((event: string, cb: (data?: unknown) => void) => {
     (handlers[event] ??= []).push(cb);
     return () => {};
@@ -87,6 +88,7 @@ window.open = openSpy as unknown as typeof window.open;
 const windowState = await import('./session-window-state.js');
 const { currentCommandSource } = windowState;
 const sw = await import('./session-window.js');
+const handle = await import('./session-window-handle.js');
 sw.initSessionWindow();
 
 function emit(event: string, data?: unknown): void {
@@ -141,7 +143,6 @@ describe('session window controller', () => {
     expect(layout.createLayoutView).toHaveBeenCalledWith('sessions', panes);
     expect(tabBar.createTabBarView).toHaveBeenCalledWith('sessions', tabBarRoot);
     expect(layout.renderLayout).toHaveBeenCalled();
-    expect(tabBar.renderTabBars).toHaveBeenCalled();
   });
 
   it('a second open swaps the project without opening another window', () => {
@@ -175,7 +176,7 @@ describe('session window controller', () => {
     expect(chromeCleanup).toHaveBeenCalled();
     expect(layout.renderLayout).toHaveBeenCalled();
     expect(ptyKill).not.toHaveBeenCalled();
-    expect(sw.isSessionWindowOpen()).toBe(false);
+    expect(handle.getSessionWindowDocument()).toBeNull();
 
     // Idempotent.
     onClosedCb!();
@@ -345,7 +346,7 @@ describe('session window controller', () => {
     expect(openSpy).toHaveBeenCalledTimes(1);
     onClosedCb!();
     expect(openSpy).toHaveBeenCalledTimes(2);
-    expect(sw.isSessionWindowOpen()).toBe(true);
+    expect(handle.getSessionWindowDocument()).not.toBeNull();
     expect(windowState.getDetachedProjectId()).toBe('B');
   });
 
@@ -364,13 +365,13 @@ describe('session window controller', () => {
   });
 
   it('focusSessionWindow focuses via the main process; isSessionWindowFocused asks the child document', () => {
-    expect(sw.isSessionWindowFocused()).toBe(false);
+    expect(handle.isSessionWindowFocused()).toBe(false);
     sw.openSessionWindow('B');
     sw.focusSessionWindow();
     expect(sessionWindowApi.focus).toHaveBeenCalled();
     const doc = childWin().document;
     vi.spyOn(doc, 'hasFocus').mockReturnValue(true);
-    expect(sw.isSessionWindowFocused()).toBe(true);
+    expect(handle.isSessionWindowFocused()).toBe(true);
   });
 
   it('ignores an unknown project', () => {

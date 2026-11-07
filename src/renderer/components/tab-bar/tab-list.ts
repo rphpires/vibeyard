@@ -326,7 +326,7 @@ export function renderTabList(view: TabBarView): void {
   if (!project) return;
   const tabs = viewTabs(view.kind, project);
   // This view's own active tab (the main view of a detached project keeps its own).
-  const activeId = viewActiveSessionId(view.kind, project);
+  const activeId = viewActiveSessionId(view.kind, project, tabs);
 
   let activeTab: HTMLElement | null = null;
   for (const session of tabs) {
@@ -364,7 +364,7 @@ export function renderTabList(view: TabBarView): void {
     tab.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).classList.contains('tab-close')) return;
       if (tab.querySelector('.tab-name input')) return;
-      if (session.id !== viewActiveSessionId(view.kind, project)) {
+      if (session.id !== activeId) {
         appState.setActiveSession(project.id, session.id);
       }
     });

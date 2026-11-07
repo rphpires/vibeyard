@@ -4,6 +4,7 @@ import { shortcutManager } from '../shortcuts.js';
 import { isWin } from '../platform.js';
 import { appState } from '../state.js';
 import type { ClipboardSource } from '../../shared/types.js';
+import { windowOf } from '../frame.js';
 
 type ExtraKeyHandler = (e: KeyboardEvent) => boolean | undefined;
 
@@ -14,11 +15,22 @@ export function wrapBracketedPaste(terminal: Terminal, text: string): string {
   return modes?.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
 }
 
+/**
+ * Move an already-opened terminal pane into `container`. Moving into another window's
+ * document (the sessions window): xterm only rebinds to that window (its rAF, DPR,
+ * listeners) when open() runs again after the move.
+ */
+export function moveOpenedTerminal(element: HTMLElement, container: HTMLElement, terminal: Terminal, xtermWrap: HTMLElement): void {
+  const previousDoc = element.ownerDocument;
+  container.appendChild(element);
+  if (container.ownerDocument !== previousDoc) terminal.open(xtermWrap);
+}
+
 // Reading the clipboard needs a focused document, so a terminal living in
 // another window (the session window) must use that window's navigator.
 export function clipboardFor(terminal: Terminal): Clipboard {
-  const win = terminal.element?.ownerDocument?.defaultView;
-  return (win?.navigator ?? navigator).clipboard;
+  const doc = terminal.element?.ownerDocument;
+  return (doc ? windowOf(doc).navigator : navigator).clipboard;
 }
 
 // Every terminal copy goes through the main process rather than

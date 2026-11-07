@@ -12,6 +12,7 @@ const focusSessionWindow = vi.fn();
 vi.mock('./state.js', () => ({
   appState: {
     get activeProject() { return activeProject; },
+    getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
     get projects() { return [activeProject, detached].filter(Boolean); },
     addFileReaderSession,
   },

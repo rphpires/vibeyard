@@ -12,6 +12,14 @@ const h = vi.hoisted(() => {
     projects: [] as Array<Record<string, any>>,
     activeProjectId: 'A' as string | null,
     get activeProject() { return this.projects.find((p) => p.id === this.activeProjectId); },
+    getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
+    findSessionWithProject(sessionId: string) {
+      for (const project of this.projects) {
+        const session = project.sessions?.find((s: { id: string }) => s.id === sessionId);
+        if (session) return { project, session };
+      }
+      return undefined;
+    },
     get activeSession() {
       const p = this.activeProject;
       return p?.sessions.find((s: { id: string }) => s.id === p.activeSessionId);

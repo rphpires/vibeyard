@@ -10,7 +10,7 @@ import { focusIfInSessionWindow } from './reveal.js';
 function onScreenProject(projectId: string) {
   const active = appState.activeProject;
   if (active?.id === projectId) return active;
-  if (projectId === getDetachedProjectId()) return appState.projects.find((p) => p.id === projectId);
+  if (projectId === getDetachedProjectId()) return appState.getProject(projectId);
   return undefined;
 }
 

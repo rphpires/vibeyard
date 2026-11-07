@@ -1,5 +1,5 @@
 import { appState, type ProjectRecord } from '../../state.js';
-import { projectIdForView, type ViewKind } from '../../session-window-state.js';
+import { projectForViewKind, type ViewKind } from '../../session-window-state.js';
 
 /**
  * One tab bar: the main window's `#tab-bar` (index.html nodes) or the sessions
@@ -31,8 +31,7 @@ export function tabBarViews(): Iterable<TabBarView> {
   return views.keys();
 }
 
-/** The project a view shows right now (projectIdForView), or undefined. */
+/** The project a view shows right now (projectForViewKind), or undefined. */
 export function viewProject(view: Pick<TabBarView, 'kind'>): ProjectRecord | undefined {
-  const id = projectIdForView(view.kind, appState.activeProjectId ?? null);
-  return id ? appState.projects.find((p) => p.id === id) : undefined;
+  return projectForViewKind(view.kind, appState);
 }

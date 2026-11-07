@@ -8,7 +8,12 @@
  * uses the global one.
  */
 export function requestFrameIn(doc: Document, cb: FrameRequestCallback): void {
-  const win = doc === document ? null : doc.defaultView;
+  const win = doc === document ? null : windowOf(doc);
   if (win && typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(cb);
   else requestAnimationFrame(cb);
+}
+
+/** The window a document belongs to; the main window for one that has none (closed, or detached). */
+export function windowOf(doc: Document): Window {
+  return doc.defaultView ?? window;
 }

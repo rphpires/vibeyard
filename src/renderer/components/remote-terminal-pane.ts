@@ -6,7 +6,7 @@ import { getTerminalTheme } from '../terminal-theme.js';
 import { FitAddon } from '@xterm/addon-fit';
 import type { ShareMode } from '../../shared/sharing-types.js';
 import { appState } from '../state.js';
-import { attachCopyOnSelect, loadWebglWithFallback } from './terminal-utils.js';
+import { attachCopyOnSelect, loadWebglWithFallback, moveOpenedTerminal } from './terminal-utils.js';
 
 interface RemoteTerminalInstance {
   terminal: Terminal;
@@ -106,11 +106,7 @@ export function attachRemoteToContainer(sessionId: string, container: HTMLElemen
 
     loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
-    const previousDoc = instance.element.ownerDocument;
-    container.appendChild(instance.element);
-    // Same rule as terminal-pane: xterm rebinds to another window's document only
-    // when open() runs again after the move (the sessions window).
-    if (container.ownerDocument !== previousDoc) instance.terminal.open(xtermWrap as HTMLElement);
+    moveOpenedTerminal(instance.element, container, instance.terminal, xtermWrap as HTMLElement);
   }
 }
 

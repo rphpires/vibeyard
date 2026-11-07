@@ -11,6 +11,7 @@ const { fakeState, closeTabsByMode, showModal } = vi.hoisted(() => ({
   projects: [] as Array<Record<string, any>>,
   activeProjectId: null as string | null,
   get activeProject() { return this.projects.find((p) => p.id === this.activeProjectId); },
+  getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
   preferences: {} as Record<string, unknown>,
   profiles: [] as unknown[],
   on: vi.fn(),
