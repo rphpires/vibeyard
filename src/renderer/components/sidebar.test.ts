@@ -138,3 +138,65 @@ describe('projectRenderOrder', () => {
     expect(projectRenderOrder([], null)).toEqual([]);
   });
 });
+
+describe('session window entry point', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    stubDom();
+  });
+
+  async function load() {
+    return import('./sidebar.js');
+  }
+
+  it('shows the detach button on a normal project when the preference is on', async () => {
+    const { detachButtonState } = await load();
+    expect(detachButtonState({ id: 'a' } as any, null, true)).toEqual({ visible: true, active: false });
+    expect(detachButtonState({ id: 'a' } as any, 'b', true)).toEqual({ visible: true, active: false });
+  });
+
+  it('hides the detach button when the preference is off or for the Temporary project', async () => {
+    const { detachButtonState } = await load();
+    expect(detachButtonState({ id: 'a' } as any, null, false).visible).toBe(false);
+    expect(detachButtonState({ id: 't', temporary: true } as any, null, true).visible).toBe(false);
+  });
+
+  it('marks the button selected for the detached project, even with the preference off', async () => {
+    const { detachButtonState } = await load();
+    expect(detachButtonState({ id: 'a' } as any, 'a', true)).toEqual({ visible: true, active: true });
+    expect(detachButtonState({ id: 'a' } as any, 'a', false)).toEqual({ visible: true, active: true });
+  });
+
+  it('toggling opens or closes the session window depending on the detached state', async () => {
+    const openSessionWindow = vi.fn();
+    const closeSessionWindow = vi.fn();
+    vi.doMock('../session-window.js', () => ({ openSessionWindow, closeSessionWindow }));
+    const { toggleSessionWindow } = await load();
+    toggleSessionWindow({ id: 'a' } as any, null);
+    expect(openSessionWindow).toHaveBeenCalledWith('a');
+    toggleSessionWindow({ id: 'a' } as any, 'a');
+    expect(closeSessionWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes a click on the detached project card to revealProject, others to setActiveProject', async () => {
+    const revealProject = vi.fn();
+    vi.doMock('../reveal.js', () => ({ revealProject }));
+    const { handleProjectCardClick } = await load();
+    const { appState } = await import('../state.js');
+    const setActive = vi.spyOn(appState, 'setActiveProject').mockImplementation(() => {});
+    handleProjectCardClick('a', true, 'a');
+    expect(revealProject).toHaveBeenCalledWith('a');
+    expect(setActive).not.toHaveBeenCalled();
+    handleProjectCardClick('b', false, 'a');
+    expect(setActive).toHaveBeenCalledWith('b');
+    handleProjectCardClick('b', true, null);
+    expect(setActive).toHaveBeenCalledTimes(1);
+  });
+
+  it('flags the detached project row with detached-window', async () => {
+    const { projectRowClasses } = await load();
+    expect(projectRowClasses({ id: 'a' } as any, true, 'a')).toContain('detached-window');
+    expect(projectRowClasses({ id: 'a' } as any, false, 'a')).toContain('detached-window');
+    expect(projectRowClasses({ id: 'b' } as any, true, 'a')).not.toContain('detached-window');
+  });
+});

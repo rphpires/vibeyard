@@ -138,7 +138,7 @@ const defaultPreferences: Preferences = {
   copyOnSelect: false,
   zoomFactor: 1.0,
   readinessExcludedProviders: [],
-  sidebarViews: { gitPanel: true, sessionHistory: true, discussions: true, fileTree: true, activeSessions: true },
+  sidebarViews: { gitPanel: true, sessionHistory: true, discussions: true, fileTree: true, activeSessions: true, sessionWindow: true },
   boardCardMetrics: true,
   locale: 'en',
 };

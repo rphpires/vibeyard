@@ -7,7 +7,7 @@ import { toggleRow } from './shared.js';
 import type { Preferences } from '../../../shared/types.js';
 import { DEFAULT_ACTIVE_SESSION_STATUSES } from '../active-sessions-panel.js';
 
-type SidebarViews = { gitPanel: boolean; sessionHistory: boolean; discussions: boolean; fileTree: boolean; activeSessions: boolean };
+type SidebarViews = { gitPanel: boolean; sessionHistory: boolean; discussions: boolean; fileTree: boolean; activeSessions: boolean; sessionWindow: boolean };
 type ActiveStatuses = NonNullable<Preferences['activeSessionStatuses']>;
 
 export function createAppearanceSection(ctx: PreferencesContext): SectionController {
@@ -65,13 +65,14 @@ export function createAppearanceSection(ctx: PreferencesContext): SectionControl
       sidebarHeading.textContent = t('appearance.sidebarViews');
       container.appendChild(sidebarHeading);
 
-      const views = appState.preferences.sidebarViews ?? { gitPanel: true, sessionHistory: true, discussions: true, fileTree: true, activeSessions: true };
+      const views = appState.preferences.sidebarViews ?? { gitPanel: true, sessionHistory: true, discussions: true, fileTree: true, activeSessions: true, sessionWindow: true };
       const toggles: { key: keyof SidebarViews; label: string }[] = [
         { key: 'fileTree', label: t('appearance.fileTree') },
         { key: 'gitPanel', label: t('appearance.gitPanel') },
         { key: 'sessionHistory', label: t('appearance.sessionHistory') },
         { key: 'discussions', label: t('appearance.discussions') },
         { key: 'activeSessions', label: t('appearance.activeSessions') },
+        { key: 'sessionWindow', label: t('appearance.sessionWindow') },
       ];
 
       const checkboxes = {} as Record<keyof SidebarViews, HTMLInputElement>;
@@ -121,6 +122,7 @@ export function createAppearanceSection(ctx: PreferencesContext): SectionControl
           discussions: sidebarCheckboxes.discussions.checked,
           fileTree: sidebarCheckboxes.fileTree.checked,
           activeSessions: sidebarCheckboxes.activeSessions.checked,
+          sessionWindow: sidebarCheckboxes.sessionWindow.checked,
         });
       }
       if (statusCheckboxes) {

@@ -32,6 +32,7 @@
     "sessionHistory": "会话历史",
     "discussions": "讨论",
     "activeSessions": "活动会话",
+    "sessionWindow": "独立会话窗口按钮",
     "activeSessionStatuses": "活动会话状态",
     "board": "看板",
     "showMetricsOnCards": "在卡片上显示指标"
@@ -47,6 +48,7 @@
     "team": "团队",
     "files": "文件",
     "git": "Git",
+    "detachSessions": "在独立窗口中打开会话",
     "newProject": {
       "title": "新建项目",
       "nameLabel": "名称",

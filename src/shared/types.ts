@@ -413,6 +413,8 @@ export interface Preferences {
     fileTree: boolean;
     /** Show the global cross-project "Active Sessions" section in the sidebar. */
     activeSessions: boolean;
+    /** Show the "open sessions in a separate window" button on the active project card. */
+    sessionWindow: boolean;
   };
   /**
    * Which live session statuses count as "active" for the global Active Sessions
