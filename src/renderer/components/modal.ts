@@ -19,6 +19,8 @@ export interface FieldDef {
 
 /** Document the single modal currently lives in. `closeModal()` closes it wherever it is. */
 let activeDoc: Document = document;
+/** Overlay element of the open modal; keeps teardown reachable if its document dies. */
+let activeOverlay: HTMLElement | null = null;
 
 function nodes(doc: Document) {
   return {
@@ -32,17 +34,24 @@ function nodes(doc: Document) {
 
 /** Make `doc` the modal's document; a modal still open in another document is closed first. */
 function useDoc(doc: Document): void {
+  // The overlay element is remembered so teardown still reaches listeners
+  // registered in a document that has since lost its markup or been closed.
+  if (!activeDoc.getElementById('modal-overlay') || activeDoc.defaultView === null && activeDoc !== document) {
+    closeModal();
+    activeDoc = document;
+  }
   if (doc !== activeDoc) {
     closeModal();
     activeDoc = doc;
   }
+  activeOverlay = nodes(activeDoc).overlay;
 }
 
 /** Register a teardown callback for resources injected into the open modal
  *  (e.g. a custom-select created outside the standard FieldDef flow). Runs
  *  when the modal closes. */
 export function registerModalCleanup(fn: () => void): void {
-  const { overlay } = nodes(activeDoc);
+  const overlay = activeOverlay ?? nodes(activeDoc).overlay;
   if (!(overlay as any)._selectCleanups) (overlay as any)._selectCleanups = [];
   (overlay as any)._selectCleanups.push(fn);
 }
@@ -65,8 +74,8 @@ export function setModalError(fieldId: string, message: string): void {
 }
 
 export function closeModal(): void {
-  const { overlay } = nodes(activeDoc);
-  overlay.classList.add('hidden');
+  const overlay = activeDoc.getElementById('modal-overlay') ?? activeOverlay;
+  overlay?.classList.add('hidden');
   cleanup();
 }
 
@@ -270,18 +279,20 @@ export function showConfirmDialog(
 
   btnConfirm.addEventListener('click', handleConfirm);
   btnCancel.addEventListener('click', handleCancel);
-  activeDoc.addEventListener('keydown', handleKeydown);
+  const doc = activeDoc;
+  doc.addEventListener('keydown', handleKeydown);
 
   (overlay as any)._cleanup = () => {
     unregisterEsc();
     btnConfirm.removeEventListener('click', handleConfirm);
     btnCancel.removeEventListener('click', handleCancel);
-    activeDoc.removeEventListener('keydown', handleKeydown);
+    doc.removeEventListener('keydown', handleKeydown);
   };
 }
 
 function cleanup(): void {
-  const { overlay } = nodes(activeDoc);
+  const overlay = activeOverlay ?? activeDoc.getElementById('modal-overlay');
+  if (!overlay) return;
   if ((overlay as any)._cleanup) {
     (overlay as any)._cleanup();
     (overlay as any)._cleanup = null;
@@ -334,13 +345,14 @@ export function showPropertiesDialog(
 
   const unregisterEsc = pushModal({ onEscape: handleClose }, activeDoc);
 
+  const doc = activeDoc;
   btnConfirm.addEventListener('click', handleClose);
-  activeDoc.addEventListener('keydown', handleKeydown);
+  doc.addEventListener('keydown', handleKeydown);
 
   (overlay as any)._cleanup = () => {
     unregisterEsc();
     btnConfirm.removeEventListener('click', handleClose);
-    activeDoc.removeEventListener('keydown', handleKeydown);
+    doc.removeEventListener('keydown', handleKeydown);
     btnCancel.style.display = '';
   };
 }

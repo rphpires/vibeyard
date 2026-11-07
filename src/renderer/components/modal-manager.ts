@@ -23,10 +23,13 @@ export interface ModalEscapeEntry {
 
 const stack: ModalEscapeEntry[] = [];
 const listenerDocs = new WeakSet<Document>();
+const entryDocs = new WeakMap<ModalEscapeEntry, Document>();
 
-function onKeydown(e: KeyboardEvent): void {
+function onKeydown(e: KeyboardEvent, doc: Document): void {
   if (e.key !== 'Escape') return;
   if (stack.length === 0) return; // no modal open — let ESC flow to the app/terminal
+  // A modal open in another document must not react to (or swallow) ESC here.
+  if (entryDocs.get(stack[stack.length - 1]) !== doc) return;
 
   // A modal is open: ESC must never reach xterm/PTY.
   e.preventDefault();
@@ -43,7 +46,7 @@ function onKeydown(e: KeyboardEvent): void {
 
 function ensureListener(doc: Document): void {
   if (listenerDocs.has(doc)) return;
-  doc.addEventListener('keydown', onKeydown, true);
+  doc.addEventListener('keydown', (e) => onKeydown(e, doc), true);
   listenerDocs.add(doc);
 }
 
@@ -53,6 +56,7 @@ function ensureListener(doc: Document): void {
  */
 export function pushModal(entry: ModalEscapeEntry, doc: Document = document): () => void {
   ensureListener(doc);
+  entryDocs.set(entry, doc);
   stack.push(entry);
   let removed = false;
   return () => {
