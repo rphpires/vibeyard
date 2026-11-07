@@ -59,10 +59,11 @@ export function docForSession(projectId: string, sessionId: string): Document {
 /**
  * Run a command that only exists in the main window (sidebar, git panel, project
  * terminal, quick open, preferences, …): fired from the sessions window, bring the
- * main window forward first.
+ * main window forward first — through `app:focus` (restore + focus with steal), since
+ * `window.focus()` does not reliably raise a window on Windows.
  */
 export function runInMainWindow(fn: () => void, source?: CommandSource): void {
-  if (commandTargetView(source) === 'sessions') window.focus();
+  if (commandTargetView(source) === 'sessions') window.vibeyard.app.focus();
   fn();
 }
 

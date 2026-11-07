@@ -33,6 +33,7 @@ vi.mock('./components/terminal-pane.js', () => ({ getTerminalInstance: vi.fn(() 
 
 (window as unknown as { vibeyard: unknown }).vibeyard = {
   store: { load: vi.fn(), save: vi.fn() },
+  app: { focus: vi.fn() },
   session: { transcriptExists: vi.fn(() => Promise.resolve(true)) },
   ctl: {
     onCommand: vi.fn((cb) => { ctlListeners.command = cb; return () => {}; }),
@@ -64,6 +65,24 @@ beforeEach(() => {
   sw.getSessionWindowDocument.mockReturnValue(null);
   _resetForTesting();
   ws._resetForTesting();
+});
+
+describe('runInMainWindow', () => {
+  it('from the sessions window raises main through app:focus (restore + steal), then runs', () => {
+    setup();
+    const fn = vi.fn();
+    reveal.runInMainWindow(fn, 'sessions');
+    expect(window.vibeyard.app.focus).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('from main runs without refocusing', () => {
+    setup();
+    const fn = vi.fn();
+    reveal.runInMainWindow(fn, 'main');
+    expect(window.vibeyard.app.focus).not.toHaveBeenCalled();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('commandTargetProjectId / commandTargetSession', () => {
