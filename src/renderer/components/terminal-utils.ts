@@ -14,6 +14,13 @@ export function wrapBracketedPaste(terminal: Terminal, text: string): string {
   return modes?.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
 }
 
+// Reading the clipboard needs a focused document, so a terminal living in
+// another window (the session window) must use that window's navigator.
+export function clipboardFor(terminal: Terminal): Clipboard {
+  const win = terminal.element?.ownerDocument?.defaultView;
+  return (win?.navigator ?? navigator).clipboard;
+}
+
 // Every terminal copy goes through the main process rather than
 // navigator.clipboard, so exactly one plain-text flavor reaches the OS clipboard
 // (#160). `source` is the caller's intent, not a mechanism: the main process
@@ -95,7 +102,7 @@ export function attachClipboardCopyHandler(
     // Windows: Ctrl+V → async paste clipboard to PTY
     if (isWin && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'v' && writeToPty) {
       if (e.type === 'keydown') {
-        navigator.clipboard.readText().then((text) => {
+        clipboardFor(terminal).readText().then((text) => {
           if (!text) return;
           writeToPty(wrapBracketedPaste(terminal, text));
         }).catch(() => {});

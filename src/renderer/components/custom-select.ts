@@ -16,23 +16,24 @@ export function createCustomSelect(
   options: SelectOption[],
   defaultValue?: string,
   onChange?: (value: string) => void,
+  doc: Document = document,
 ): CustomSelectInstance {
   const defaultOpt = options.find(o => o.value === defaultValue) ?? options.find(o => !o.disabled) ?? options[0];
 
-  const wrapper = document.createElement('div');
+  const wrapper = doc.createElement('div');
   wrapper.className = 'custom-select';
 
-  const hidden = document.createElement('input');
+  const hidden = doc.createElement('input');
   hidden.type = 'hidden';
   hidden.id = id;
   hidden.value = defaultOpt?.value ?? '';
 
-  const trigger = document.createElement('button');
+  const trigger = doc.createElement('button');
   trigger.type = 'button';
   trigger.className = 'custom-select-trigger';
   trigger.textContent = defaultOpt?.label ?? '';
 
-  const dropdown = document.createElement('div');
+  const dropdown = doc.createElement('div');
   dropdown.className = 'custom-select-dropdown';
 
   let activeIndex = -1;
@@ -40,7 +41,7 @@ export function createCustomSelect(
 
   for (let i = 0; i < options.length; i++) {
     const opt = options[i];
-    const item = document.createElement('div');
+    const item = doc.createElement('div');
     item.className = 'custom-select-item';
     item.textContent = opt.label;
     item.dataset.value = opt.value;
@@ -137,7 +138,7 @@ export function createCustomSelect(
     if (!isOpen()) return;
     if (!wrapper.contains(e.target as Node)) closeDropdown();
   };
-  document.addEventListener('mousedown', onOutsideClick);
+  doc.addEventListener('mousedown', onOutsideClick);
 
   wrapper.appendChild(hidden);
   wrapper.appendChild(trigger);
@@ -153,6 +154,6 @@ export function createCustomSelect(
       trigger.textContent = options[index].label;
       items.forEach((el, i) => el.classList.toggle('selected', i === index));
     },
-    destroy() { document.removeEventListener('mousedown', onOutsideClick); },
+    destroy() { doc.removeEventListener('mousedown', onOutsideClick); },
   };
 }

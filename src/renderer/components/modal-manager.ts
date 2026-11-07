@@ -22,7 +22,7 @@ export interface ModalEscapeEntry {
 }
 
 const stack: ModalEscapeEntry[] = [];
-let listenerInstalled = false;
+const listenerDocs = new WeakSet<Document>();
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
@@ -41,18 +41,18 @@ function onKeydown(e: KeyboardEvent): void {
   top.onEscape();
 }
 
-function ensureListener(): void {
-  if (listenerInstalled) return;
-  document.addEventListener('keydown', onKeydown, true);
-  listenerInstalled = true;
+function ensureListener(doc: Document): void {
+  if (listenerDocs.has(doc)) return;
+  doc.addEventListener('keydown', onKeydown, true);
+  listenerDocs.add(doc);
 }
 
 /**
  * Push a modal onto the escape stack. Returns an idempotent unregister function
  * that MUST be called when the modal closes.
  */
-export function pushModal(entry: ModalEscapeEntry): () => void {
-  ensureListener();
+export function pushModal(entry: ModalEscapeEntry, doc: Document = document): () => void {
+  ensureListener(doc);
   stack.push(entry);
   let removed = false;
   return () => {
@@ -93,7 +93,7 @@ export function bindModalDismiss(opts: BindModalDismissOptions): () => void {
   const holder = opts.overlay as DismissHolder;
   holder.__modalDismissTeardown?.();
 
-  const unregisterEsc = pushModal({ onEscape: opts.onClose, canEscape: opts.canEscape });
+  const unregisterEsc = pushModal({ onEscape: opts.onClose, canEscape: opts.canEscape }, opts.overlay.ownerDocument);
 
   let onOverlayClick: ((e: MouseEvent) => void) | null = null;
   if (opts.closeOnOverlayClick !== false) {

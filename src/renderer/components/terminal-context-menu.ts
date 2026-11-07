@@ -1,18 +1,19 @@
 import type { Terminal } from '@xterm/xterm';
 import { isMac } from '../platform.js';
-import { copySelection, wrapBracketedPaste } from './terminal-utils.js';
+import { clipboardFor, copySelection, wrapBracketedPaste } from './terminal-utils.js';
 import { t } from '../i18n.js';
 
 let activeMenu: HTMLElement | null = null;
+let menuDoc: Document = document;
 
-function makeItem(label: string, shortcut?: string): HTMLDivElement {
-  const item = document.createElement('div');
+function makeItem(doc: Document, label: string, shortcut?: string): HTMLDivElement {
+  const item = doc.createElement('div');
   item.className = 'tab-context-menu-item';
-  const labelSpan = document.createElement('span');
+  const labelSpan = doc.createElement('span');
   labelSpan.textContent = label;
   item.appendChild(labelSpan);
   if (shortcut) {
-    const hint = document.createElement('span');
+    const hint = doc.createElement('span');
     hint.className = 'shortcut-hint';
     hint.textContent = shortcut;
     item.appendChild(hint);
@@ -36,14 +37,16 @@ export function showTerminalContextMenu(
 ): void {
   hideTerminalContextMenu();
 
-  const menu = document.createElement('div');
+  const doc = terminal.element?.ownerDocument ?? document;
+  const win = doc.defaultView ?? window;
+  const menu = doc.createElement('div');
   menu.className = 'tab-context-menu';
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
 
   const hasSelection = terminal.hasSelection();
 
-  const copyItem = makeItem(t('contextMenu.terminal.copy'), isMac ? '⇧⌘C' : 'Ctrl+Shift+C');
+  const copyItem = makeItem(doc, t('contextMenu.terminal.copy'), isMac ? '⇧⌘C' : 'Ctrl+Shift+C');
   if (!hasSelection) copyItem.classList.add('disabled');
   if (hasSelection) {
     copyItem.addEventListener('click', (e) => {
@@ -55,23 +58,23 @@ export function showTerminalContextMenu(
   }
   menu.appendChild(copyItem);
 
-  const pasteItem = makeItem(t('contextMenu.terminal.paste'), isMac ? '⌘V' : 'Ctrl+V');
+  const pasteItem = makeItem(doc, t('contextMenu.terminal.paste'), isMac ? '⌘V' : 'Ctrl+V');
   pasteItem.addEventListener('click', (e) => {
     e.stopPropagation();
     hideTerminalContextMenu();
     terminal.focus();
-    navigator.clipboard.readText().then((text) => {
+    clipboardFor(terminal).readText().then((text) => {
       if (!text) return;
       writeToPty(wrapBracketedPaste(terminal, text));
     }).catch(() => {});
   });
   menu.appendChild(pasteItem);
 
-  const sep1 = document.createElement('div');
+  const sep1 = doc.createElement('div');
   sep1.className = 'tab-context-menu-separator';
   menu.appendChild(sep1);
 
-  const selectAllItem = makeItem(t('contextMenu.terminal.selectAll'));
+  const selectAllItem = makeItem(doc, t('contextMenu.terminal.selectAll'));
   selectAllItem.addEventListener('click', (e) => {
     e.stopPropagation();
     hideTerminalContextMenu();
@@ -80,22 +83,23 @@ export function showTerminalContextMenu(
   });
   menu.appendChild(selectAllItem);
 
-  document.body.appendChild(menu);
+  doc.body.appendChild(menu);
+  menuDoc = doc;
   activeMenu = menu;
 
   const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 4}px`;
-  if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+  if (rect.right > win.innerWidth) menu.style.left = `${win.innerWidth - rect.width - 4}px`;
+  if (rect.bottom > win.innerHeight) menu.style.top = `${win.innerHeight - rect.height - 4}px`;
 
-  document.addEventListener('click', onDocumentClick);
-  document.addEventListener('keydown', onDocumentKeydown);
+  doc.addEventListener('click', onDocumentClick);
+  doc.addEventListener('keydown', onDocumentKeydown);
 }
 
 export function hideTerminalContextMenu(): void {
   if (activeMenu) {
     activeMenu.remove();
     activeMenu = null;
-    document.removeEventListener('click', onDocumentClick);
-    document.removeEventListener('keydown', onDocumentKeydown);
+    menuDoc.removeEventListener('click', onDocumentClick);
+    menuDoc.removeEventListener('keydown', onDocumentKeydown);
   }
 }
