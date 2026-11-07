@@ -53,6 +53,15 @@ export function viewTabs(kind: ViewKind, project: ProjectRecord): SessionRecord[
   return tabSessions(project).filter((s) => viewShowsSession(kind, project.id, s));
 }
 
+/**
+ * Whether `kind`'s view owns `projectId`'s layout (split/swarm). The detached project's
+ * main view is always tabs: its layout is the sessions window's, so Swarm toggles from
+ * the main window (shortcut, menu, More menu) do nothing for it.
+ */
+export function viewOwnsLayout(kind: ViewKind, projectId: string): boolean {
+  return !(kind === 'main' && projectId === detachedProjectId);
+}
+
 /** The project a view is currently showing. */
 export function projectIdForView(kind: ViewKind, activeProjectId: string | null): string | null {
   return kind === 'sessions' ? getDetachedProjectId() : activeProjectId;

@@ -12,6 +12,7 @@ import { sshHostOptions } from '../../../shared/ssh-host.js';
 import { resolveRunLocation } from '../../run-location.js';
 import { basename } from '../../../shared/platform.js';
 import { viewProject, type TabBarView } from './views.js';
+import { viewOwnsLayout } from '../../session-window-state.js';
 
 /** The project with this id, or the active project when no id is given. */
 function projectById(projectId?: string): ProjectRecord | undefined {
@@ -64,8 +65,11 @@ export function showMoreMenu(x: number, y: number, view?: TabBarView): void {
     menu.appendChild(sep);
   };
 
-  const swarmActive = project?.layout.mode === 'swarm';
-  addItem(swarmActive ? t('tab.moreMenu.swarmLayoutActive') : t('tab.moreMenu.swarmLayout'), () => appState.toggleSwarm(project?.id));
+  // Same rule as the Swarm shortcut: no layout toggle in the detached project's main view.
+  if (!project || viewOwnsLayout(view?.kind ?? 'main', project.id)) {
+    const swarmActive = project?.layout.mode === 'swarm';
+    addItem(swarmActive ? t('tab.moreMenu.swarmLayoutActive') : t('tab.moreMenu.swarmLayout'), () => appState.toggleSwarm(project?.id));
+  }
   addItem(t('tab.moreMenu.mcpInspector'), () => { if (project) addMcpInspector(project.id); });
 
   addSeparator();

@@ -12,6 +12,7 @@ import {
   viewActiveSessionId,
   viewKindFor,
   onScreenTabIds,
+  viewOwnsLayout,
   _resetForTesting,
 } from './session-window-state.js';
 
@@ -144,5 +145,13 @@ describe('session-window-state', () => {
     expect(onScreenTabIds([a, p], 'p')).toEqual(['p2']);
     setMainViewSelection('pk');
     expect(onScreenTabIds([a, p], 'p')).toEqual(['pk', 'p2']);
+  });
+
+  it('the detached project layout (split/swarm) belongs to the sessions view only', () => {
+    expect(viewOwnsLayout('main', 'B')).toBe(true);
+    setDetachedProjectId('B');
+    expect(viewOwnsLayout('main', 'B')).toBe(false);
+    expect(viewOwnsLayout('sessions', 'B')).toBe(true);
+    expect(viewOwnsLayout('main', 'A')).toBe(true);
   });
 });

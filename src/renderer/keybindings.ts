@@ -17,7 +17,7 @@ import { DomSearchBackend } from './components/dom-search-backend.js';
 import { toggleInspector } from './components/session-inspector.js';
 import { zoomIn, zoomOut, zoomReset } from './zoom.js';
 import { getBrowserTabInstance } from './components/browser-tab/instance.js';
-import { getDetachedProjectId, runWithCommandSource, viewShowsSession } from './session-window-state.js';
+import { runWithCommandSource, viewOwnsLayout, viewShowsSession } from './session-window-state.js';
 import { isCliSession } from './session-utils.js';
 import {
   commandTargetDoc,
@@ -56,8 +56,7 @@ export function initKeybindings(): void {
   };
   const toggleSwarm = (source?: CommandSource): void => {
     const { projectId, view } = target(source);
-    // The main view of the detached project is always tabs: that layout is the sessions window's.
-    if (!projectId || (view === 'main' && projectId === getDetachedProjectId())) return;
+    if (!projectId || !viewOwnsLayout(view, projectId)) return;
     appState.toggleSwarm(projectId);
   };
   // The session inspector panel lives in the main window only.
