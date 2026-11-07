@@ -4,9 +4,12 @@ export interface Bounds { x: number; y: number; width: number; height: number }
 
 export const DEFAULT_SESSION_WINDOW_SIZE = { width: 1000, height: 700 };
 
+// The renderer suffixes a counter (`vibeyard-sessions-3`) so a reopen never reuses a closing window.
+// Exact match: a bare prefix test would admit any about:blank link whose target merely starts with it.
+const SESSION_WINDOW_FRAME_RE = new RegExp(`^${SESSION_WINDOW_FRAME}-[0-9]+$`);
+
 export function isSessionWindowOpen(url: string, frameName: string): boolean {
-  // The renderer suffixes a counter (`vibeyard-sessions-3`) so a reopen never reuses a closing window.
-  return url === 'about:blank' && frameName.startsWith(`${SESSION_WINDOW_FRAME}-`);
+  return url === 'about:blank' && SESSION_WINDOW_FRAME_RE.test(frameName);
 }
 
 function overlapArea(a: Bounds, b: Bounds): number {

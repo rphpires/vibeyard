@@ -9,6 +9,10 @@ describe('isSessionWindowOpen', () => {
     expect(isSessionWindowOpen('about:blank', 'x')).toBe(false);
     expect(isSessionWindowOpen('https://a', 'vibeyard-sessions-1')).toBe(false);
     expect(isSessionWindowOpen('file:///x', 'vibeyard-sessions-1')).toBe(false);
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions-')).toBe(false);
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions-x')).toBe(false);
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions-1-evil')).toBe(false);
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions-1x')).toBe(false);
   });
 });
 
