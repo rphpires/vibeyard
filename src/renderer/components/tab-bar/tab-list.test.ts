@@ -316,6 +316,20 @@ describe('menu actions follow the view', () => {
     expect(showJoinDialog).toHaveBeenCalledWith({ projectId: 'B', doc: other });
   });
 
+  it('Inspect is offered only in the main window (the inspector panel lives there)', () => {
+    const menuTexts = (v: TabBarView, id: string): string[] => {
+      hideTabContextMenu();
+      renderTabList(v);
+      v.tabListEl.querySelector<HTMLElement>(`[data-session-id="${id}"]`)!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      return Array.from(getActiveContextMenu()!.querySelectorAll<HTMLElement>('.tab-context-menu-item'))
+        .map((el) => el.textContent ?? '');
+    };
+    expect(menuTexts(view('main'), 'cli1')).toContain('Inspect');
+    setDetachedProjectId('B');
+    expect(menuTexts(view('sessions'), 'cli1')).not.toContain('Inspect');
+  });
+
   it('tab menu → share opens the share dialog in the view document', () => {
     setDetachedProjectId('B');
     const other = document.implementation.createHTMLDocument('sessions');

@@ -181,7 +181,8 @@ export function showTabContextMenu(
   const isCli = isCliSession(session);
   const isRemote = session.type === 'remote-terminal';
   const providerCapabilities = getProviderCapabilities(session.providerId || 'claude');
-  const canInspect = isCli && providerCapabilities?.hookStatus !== false;
+  // The inspector panel exists only in the main window.
+  const canInspect = isCli && providerCapabilities?.hookStatus !== false && view.kind === 'main';
   const currentlySharing = isSharing(session.id);
 
   const shareSeparator = doc.createElement('div');
