@@ -278,4 +278,26 @@ Sem testes, sem checkpoint, em branch/worktree descartável. Decide **move diret
 
 ## Spike result
 
-_(preenchido na Task 1)_
+Rodado automatizado (Electron via CDP, Windows 11, DPR 1, PTY = `cmd.exe` via `pty.createShell`, HOME isolado). Código do spike descartado.
+
+**Método: `move`.** Plano B (`recreate` + serialize) não foi necessário nem testado.
+
+**Regra obrigatória:** depois de cada `appendChild` do `.terminal-pane` em outro documento, chamar `terminal.open(xtermWrap)` de novo. Num terminal já aberto isso só troca `CoreBrowserService.window` para a janela nova (xterm 6, `CoreBrowserTerminal.open`), não recria nada. Sem isso o xterm segue agendando render no `requestAnimationFrame` da janela antiga (a nova congela se a principal estiver oculta/minimizada) e o monitor de DPR fica preso à janela antiga.
+
+**WebGL:** não precisa descarregar/recarregar num move vivo. Ida/volta/ida mantendo o addon: contexto intacto, renderiza. Descarregar antes + `loadWebglWithFallback` depois também funciona (opcional). Se o canvas estiver com `getContext('webgl2').isContextLost()`, `dispose` + `loadWebglWithFallback` recupera.
+
+**Passou (com evidência):** saída do PTY e digitação no documento novo (CDP `Input.insertText` → buffer), seleção com mouse (`getSelection`), `ownerDocument`/textarea no doc novo, foco no textarea filho, stylesheets via `new URL('styles.css'|'xterm.css', document.baseURI)` carregam (CSP ok), find bar aberta via `showSearchBar` aparece dentro do pane no filho e `findNext` acha/seleciona, hover + Ctrl+click de link (link provider: `hover` e `activate ctrl=true`, sublinhado visível), `resizeTo` + `fitTerminal` → cols/rows e `pty.resize` novos, DPR emulado 1→2 no filho → `coreBrowserService.dpr` 2 e canvas dobra, volta para `#terminal-container` (+ `open()`) com render e WebGL ok.
+
+**Falhou / pegadinhas para a Task 8:**
+- **Fechar a janela com pane dentro mata o pane:** o contexto WebGL é perdido sem evento `webglcontextlost` (então o `onContextLoss → dispose` nunca roda e fica caixa cinza), e **todos os listeners DOM dos nós do pane somem** (linkifier, mousedown/contextmenu/drag nossos). Recarregar WebGL não resolve os listeners. Correção verificada: mover os panes de volta para o documento principal **de forma síncrona** em `pagehide` (ou `beforeunload`/`unload`) do filho, ou antes de chamar `close()`. Com isso listeners e WebGL sobrevivem.
+- **`BrowserWindow.getAllWindows()[0]` vira a janela filha:** `pty:data` do shell ia para o filho (que não tem listener) e nada chegava. Confirma a Task 2 (referência explícita à janela principal) — é bloqueante, não cosmético.
+- **Ctrl+F no filho não abre a find bar:** o `keydown` de `keybindings.ts` está no `document` principal. O documento filho precisa do mesmo listener.
+- **Ctrl+V (Windows) no filho não cola:** `attachClipboardCopyHandler` usa `navigator.clipboard.readText()` do principal → "Document is not focused". O do filho (`terminal.element.ownerDocument.defaultView.navigator.clipboard`) funciona. Copy (copy-on-select, Ctrl+C/Ctrl+Shift+C) vai por IPC `clipboard:write` e independe do documento.
+- `setFocused` lê `document.activeElement` do principal; no filho a heurística de foco fica errada.
+- `window.vibeyard` não existe no documento filho; todo código usa o do principal.
+- Janela fechada: `devicePixelRatio` = 0 → nunca rodar `fit` num pane que ainda esteja num documento fechado.
+- `window.open` de novo com o mesmo nome reusa a janela e navega para `about:blank`, apagando o DOM dela (visto por acidente, não isolado): guardar a referência e não reabrir.
+- xterm guarda `_document` do primeiro `open()` (usado em mouse-tracking de apps TUI e pelo DOM renderer de fallback). Não testado com app que liga mouse reporting.
+- Janelas ocluídas/ocultas param `requestAnimationFrame` (Chromium). No teste automatizado precisei de `--disable-features=CalculateNativeWinOcclusion`; uso real não é afetado.
+
+**Não verificado — fica para o manual da Task 11:** dois monitores reais com escalas diferentes (só DPR emulado), nitidez visual, copy-on-select ligado na preferência (caminho é IPC), colar com o clipboard real do SO por Ctrl+V depois da correção, IME, `<webview>`.
