@@ -115,7 +115,7 @@ describe('session window controller', () => {
     sw.openSessionWindow('B');
 
     expect(openSpy).toHaveBeenCalledTimes(1);
-    expect(openSpy).toHaveBeenCalledWith('about:blank', 'vibeyard-sessions');
+    expect(openSpy).toHaveBeenCalledWith('about:blank', expect.stringMatching(/^vibeyard-sessions-\d+$/));
     expect(windowState.getDetachedProjectId()).toBe('B');
     expect(sessionWindowApi.setTitle).toHaveBeenCalledWith('B — Vibeyard');
 
@@ -254,14 +254,65 @@ describe('session window controller', () => {
     expect(currentCommandSource()).toBeNull();
   });
 
-  it('treats a closed child as gone and opens a fresh one', () => {
+  it('treats a closed child as gone and opens a fresh one once the main process reports it', () => {
     sw.openSessionWindow('B');
     const first = childWin();
     Object.defineProperty(first, 'closed', { value: true, configurable: true });
 
     sw.openSessionWindow('C');
+    expect(windowState.getDetachedProjectId()).toBeNull();
+    onClosedCb!();
     expect(openSpy).toHaveBeenCalledTimes(2);
     expect(windowState.getDetachedProjectId()).toBe('C');
+  });
+
+  it('a reopen while the closed window is still going away waits for it to be gone', () => {
+    sw.openSessionWindow('B');
+    sw.closeSessionWindow();
+    // Same task as the close: the old child has not closed yet. window.open with its
+    // name now would reuse a closing window (crashed Electron in the real app).
+    sw.openSessionWindow('C');
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(windowState.getDetachedProjectId()).toBeNull();
+
+    // The main process reports the old window closed: the pending open runs, latest project wins.
+    onClosedCb!();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    expect(windowState.getDetachedProjectId()).toBe('C');
+    // Even now the old window may still answer to its name here: never reuse it.
+    expect(openSpy.mock.calls[1][1]).not.toBe(openSpy.mock.calls[0][1]);
+  });
+
+  it('a close while a reopen is pending cancels it', () => {
+    sw.openSessionWindow('B');
+    sw.closeSessionWindow();
+    sw.openSessionWindow('B');
+    sw.closeSessionWindow();
+    onClosedCb!();
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(windowState.getDetachedProjectId()).toBeNull();
+  });
+
+  it('a late onClosed for the old window never tears down the reopened one', () => {
+    sw.openSessionWindow('B');
+    const first = childWin();
+    sw.closeSessionWindow();
+    // The old child already reports closed, but the main process has not said so yet.
+    Object.defineProperty(first, 'closed', { value: true, configurable: true });
+    sw.openSessionWindow('B');
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    onClosedCb!();
+    expect(openSpy).toHaveBeenCalledTimes(2);
+    expect(sw.isSessionWindowOpen()).toBe(true);
+    expect(windowState.getDetachedProjectId()).toBe('B');
+  });
+
+  it('after the main process reports the close, a reopen is immediate', () => {
+    sw.openSessionWindow('B');
+    sw.closeSessionWindow();
+    onClosedCb!();
+    sw.openSessionWindow('B');
+    expect(openSpy).toHaveBeenCalledTimes(2);
   });
 
   it('closes the window when the main document unloads', () => {

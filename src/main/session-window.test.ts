@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { isSessionWindowOpen, resolveSessionWindowBounds } from './session-window';
 
 describe('isSessionWindowOpen', () => {
-  it('accepts only about:blank with the sessions frame name', () => {
-    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions')).toBe(true);
+  it('accepts only about:blank with a numbered sessions frame name', () => {
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions-1')).toBe(true);
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions-12')).toBe(true);
+    expect(isSessionWindowOpen('about:blank', 'vibeyard-sessions')).toBe(false);
     expect(isSessionWindowOpen('about:blank', 'x')).toBe(false);
-    expect(isSessionWindowOpen('https://a', 'vibeyard-sessions')).toBe(false);
-    expect(isSessionWindowOpen('file:///x', 'vibeyard-sessions')).toBe(false);
+    expect(isSessionWindowOpen('https://a', 'vibeyard-sessions-1')).toBe(false);
+    expect(isSessionWindowOpen('file:///x', 'vibeyard-sessions-1')).toBe(false);
   });
 });
 

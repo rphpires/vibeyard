@@ -1,5 +1,5 @@
 /**
- * The sessions window: a second BrowserWindow (`window.open('about:blank', SESSION_WINDOW_FRAME)`)
+ * The sessions window: a second BrowserWindow (`window.open('about:blank', '<SESSION_WINDOW_FRAME>-<n>')`)
  * whose document lives in this renderer's JS context. Every node in it is built and
  * driven from here; panes are *moved* into it (not mirrored), and moved back before
  * it goes away. No PTY is ever touched by opening, swapping or closing it.
@@ -47,6 +47,19 @@ interface OpenWindow {
 }
 
 let current: OpenWindow | null = null;
+/**
+ * True from a teardown until the main process reports that window closed. Until then the
+ * main process refuses a new sessions window, and a late `onClosed` would tear down the
+ * new one; so an open in that gap waits for `onClosed` (the latest project wins).
+ */
+let closing = false;
+let pendingOpen: string | null = null;
+/**
+ * Each open uses a fresh frame name: a closing window keeps its name in this renderer
+ * even after the main process reports it closed, and `window.open` with that name
+ * would hand back the dying window (with a `<webview>` in it, that crashed Electron).
+ */
+let openCount = 0;
 
 function mainContainer(): HTMLElement {
   return document.getElementById('terminal-container')!;
@@ -78,6 +91,7 @@ function teardown(): void {
   const w = current;
   if (!w) return;
   current = null;
+  closing = true;
   evacuateLayoutView(w.layout, mainContainer());
   destroyLayoutView(w.layout);
   destroyTabBarView(w.tabBar);
@@ -178,7 +192,12 @@ export function openSessionWindow(projectId: string): void {
     return;
   }
 
-  const win = window.open('about:blank', SESSION_WINDOW_FRAME);
+  if (closing) {
+    pendingOpen = projectId;
+    return;
+  }
+
+  const win = window.open('about:blank', `${SESSION_WINDOW_FRAME}-${++openCount}`);
   if (!win) {
     // The main process refused: a sessions window it still tracks (orphaned, e.g.
     // from before a renderer reload). Close it so the next click opens a fresh one.
@@ -196,6 +215,7 @@ export function openSessionWindow(projectId: string): void {
 
 /** Bring the sessions window back into the main window. Idempotent. */
 export function closeSessionWindow(): void {
+  pendingOpen = null;
   if (!current) return;
   // Panes out first, while the child document is still alive.
   teardown();
@@ -226,7 +246,13 @@ export function isSessionWindowOpen(): boolean {
 
 export function initSessionWindow(): void {
   // Fallback for a close that skipped pagehide (or a main-process close): idempotent.
-  window.vibeyard.sessionWindow.onClosed(() => teardown());
+  window.vibeyard.sessionWindow.onClosed(() => {
+    teardown();
+    closing = false;
+    const projectId = pendingOpen;
+    pendingOpen = null;
+    if (projectId) openSessionWindow(projectId);
+  });
 
   appState.on('project-removed', (id) => {
     if (current && id === getDetachedProjectId()) closeSessionWindow();
