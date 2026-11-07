@@ -1,5 +1,7 @@
 import { appState } from '../../state.js';
 import { shortcutManager, displayKeys } from '../../shortcuts.js';
+import { runWithCommandSource } from '../../session-window-state.js';
+import { viewKindOfDocument } from '../../session-window-handle.js';
 import { BROWSER_DEFAULT_PARTITION } from '../../../shared/types.js';
 import { showChromeImportModal } from '../chrome-import-modal.js';
 import {
@@ -489,7 +491,11 @@ export function createBrowserTabPane(sessionId: string, url?: string): void {
       altKey: e.input.alt,
       preventDefault: () => e.preventDefault(),
     } as KeyboardEvent;
-    shortcutManager.matchEvent(synthetic);
+    // The webview's key events never reach a document's keydown listener: dispatch with
+    // the source of the window the tab is in, or a key here could act on the other one.
+    runWithCommandSource(viewKindOfDocument(instance.element.ownerDocument), () => {
+      shortcutManager.matchEvent(synthetic);
+    });
   }) as EventListener);
 
   // Preload must be set before src to ensure the inspect script is injected

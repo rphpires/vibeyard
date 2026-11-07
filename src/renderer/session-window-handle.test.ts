@@ -8,6 +8,7 @@ import {
   isSessionWindowFocused,
   getSessionWindowDocument,
   isSessionWindowOpen,
+  viewKindOfDocument,
 } from './session-window-handle.js';
 
 const focus = vi.fn();
@@ -44,6 +45,15 @@ describe('session-window-handle', () => {
     expect(focus).toHaveBeenCalledTimes(1);
     h.root.remove();
     expect(getSessionWindowDocument()).toBeNull();
+  });
+
+  it('maps a document to the window that shows it', () => {
+    expect(viewKindOfDocument(document)).toBe('main');
+    const h = handle();
+    expect(viewKindOfDocument(h.doc)).toBe('main');
+    setSessionWindowHandle(h);
+    expect(viewKindOfDocument(h.doc)).toBe('sessions');
+    expect(viewKindOfDocument(document)).toBe('main');
   });
 
   // The fan-out guard: session-window.ts imports the whole layout (split-layout, tab

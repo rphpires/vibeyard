@@ -51,3 +51,12 @@ export function getSessionWindowDocument(): Document | null {
 export function isSessionWindowOpen(): boolean {
   return live !== null;
 }
+
+/**
+ * The window a document belongs to: 'sessions' for the open sessions window's
+ * document, else 'main'. Lets a listener on a pane's own document (a webview's
+ * `before-input-event`, a selection) dispatch with the right command source.
+ */
+export function viewKindOfDocument(doc: Document): 'main' | 'sessions' {
+  return live !== null && doc === live.doc ? 'sessions' : 'main';
+}
