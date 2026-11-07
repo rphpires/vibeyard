@@ -17,14 +17,13 @@ import { checkPythonAvailable } from './prerequisites';
 import { isMac } from './platform';
 import { isCloseConfirmed, setCloseConfirmed } from './close-state';
 import { isHttpUrl } from '../shared/url';
+import { getMainWindow, setMainWindow } from './windows';
 
 // Before anything spawns: never pass a parent Vibeyard tab's ctl identity on.
 stripInheritedCtlEnv();
 
-let mainWindow: BrowserWindow | null = null;
-
 function requestConfirmClose(): void {
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = getMainWindow();
   if (win && !win.isDestroyed()) {
     win.webContents.send('app:confirmClose');
   } else {
@@ -34,7 +33,7 @@ function requestConfirmClose(): void {
 }
 
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
@@ -50,6 +49,8 @@ function createWindow(): void {
       webviewTag: true, // needed for browser-tab sessions
     },
   });
+
+  setMainWindow(mainWindow);
 
   const indexPath = path.join(__dirname, '..', '..', 'renderer', 'index.html');
   mainWindow.loadFile(indexPath);
@@ -124,7 +125,7 @@ function createWindow(): void {
     stopAllRemoteMirrors();
     resetHookWatcher();
     stopAllFileWatchers();
-    mainWindow = null;
+    setMainWindow(null);
   });
 }
 
@@ -156,7 +157,7 @@ app.whenReady().then(async () => {
   const pythonWarning = checkPythonAvailable();
   if (pythonWarning) {
     console.warn(pythonWarning);
-    dialog.showMessageBox(mainWindow!, {
+    dialog.showMessageBox(getMainWindow()!, {
       type: 'warning',
       title: 'Vibeyard — Python Not Found',
       message: pythonWarning,
@@ -166,7 +167,7 @@ app.whenReady().then(async () => {
   // Install hooks and status scripts for available providers (after window creation so dialogs can attach)
   for (const provider of getAllProviders()) {
     if (provider.validatePrerequisites()) {
-      await provider.installHooks(mainWindow);
+      await provider.installHooks(getMainWindow());
       provider.installStatusScripts();
     }
   }
@@ -178,7 +179,7 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     } else {
-      const win = BrowserWindow.getAllWindows()[0];
+      const win = getMainWindow();
       if (win && !win.isDestroyed()) {
         restartAndResync(win);
       }
@@ -186,7 +187,7 @@ app.whenReady().then(async () => {
   });
 
   powerMonitor.on('resume', () => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (win && !win.isDestroyed()) {
       restartAndResync(win);
     }
@@ -200,7 +201,7 @@ app.on('before-quit', (event) => {
     return;
   }
   flushState();
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = getMainWindow();
   if (win && !win.isDestroyed()) {
     win.webContents.send('app:quitting');
   }

@@ -120,14 +120,14 @@ export interface VibeyardApi {
     write(text: string, source?: ClipboardSource): Promise<void>;
   };
   menu: {
-    onNewProject(callback: () => void): () => void;
-    onNewSession(callback: () => void): () => void;
-    onToggleSplit(callback: () => void): () => void;
-    onNextSession(callback: () => void): () => void;
-    onPrevSession(callback: () => void): () => void;
-    onGotoSession(callback: (index: number) => void): () => void;
-    onToggleDebug(callback: () => void): () => void;
-    onToggleInspector(callback: () => void): () => void;
-    onCloseSession(callback: () => void): () => void;
+    onNewProject(callback: (source: 'main' | 'sessions') => void): () => void;
+    onNewSession(callback: (source: 'main' | 'sessions') => void): () => void;
+    onToggleSplit(callback: (source: 'main' | 'sessions') => void): () => void;
+    onNextSession(callback: (source: 'main' | 'sessions') => void): () => void;
+    onPrevSession(callback: (source: 'main' | 'sessions') => void): () => void;
+    onGotoSession(callback: (index: number, source: 'main' | 'sessions') => void): () => void;
+    onToggleDebug(callback: (source: 'main' | 'sessions') => void): () => void;
+    onToggleInspector(callback: (source: 'main' | 'sessions') => void): () => void;
+    onCloseSession(callback: (source: 'main' | 'sessions') => void): () => void;
   };
 }

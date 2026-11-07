@@ -166,15 +166,15 @@ export interface VibeyardApi {
     set(factor: number): void;
   };
   menu: {
-    onNewProject(callback: () => void): () => void;
-    onNewSession(callback: () => void): () => void;
-    onToggleSplit(callback: () => void): () => void;
-    onNextSession(callback: () => void): () => void;
-    onPrevSession(callback: () => void): () => void;
-    onGotoSession(callback: (index: number) => void): () => void;
-    onToggleDebug(callback: () => void): () => void;
-    onToggleInspector(callback: () => void): () => void;
-    onCloseSession(callback: () => void): () => void;
+    onNewProject(callback: (source: 'main' | 'sessions') => void): () => void;
+    onNewSession(callback: (source: 'main' | 'sessions') => void): () => void;
+    onToggleSplit(callback: (source: 'main' | 'sessions') => void): () => void;
+    onNextSession(callback: (source: 'main' | 'sessions') => void): () => void;
+    onPrevSession(callback: (source: 'main' | 'sessions') => void): () => void;
+    onGotoSession(callback: (index: number, source: 'main' | 'sessions') => void): () => void;
+    onToggleDebug(callback: (source: 'main' | 'sessions') => void): () => void;
+    onToggleInspector(callback: (source: 'main' | 'sessions') => void): () => void;
+    onCloseSession(callback: (source: 'main' | 'sessions') => void): () => void;
     rebuild(debugMode: boolean): Promise<void>;
   };
 }
@@ -375,15 +375,15 @@ const api: VibeyardApi = {
     },
   },
   menu: {
-    onNewProject: (cb) => onChannel('menu:new-project', cb),
-    onNewSession: (cb) => onChannel('menu:new-session', cb),
-    onToggleSplit: (cb) => onChannel('menu:toggle-split', cb),
-    onNextSession: (cb) => onChannel('menu:next-session', cb),
-    onPrevSession: (cb) => onChannel('menu:prev-session', cb),
-    onGotoSession: (cb) => onChannel('menu:goto-session', (index) => cb(index as number)),
-    onToggleDebug: (cb) => onChannel('menu:toggle-debug', cb),
-    onToggleInspector: (cb) => onChannel('menu:toggle-inspector', cb),
-    onCloseSession: (cb) => onChannel('menu:close-session', cb),
+    onNewProject: (cb) => onChannel('menu:new-project', (source) => cb(source as 'main' | 'sessions')),
+    onNewSession: (cb) => onChannel('menu:new-session', (source) => cb(source as 'main' | 'sessions')),
+    onToggleSplit: (cb) => onChannel('menu:toggle-split', (source) => cb(source as 'main' | 'sessions')),
+    onNextSession: (cb) => onChannel('menu:next-session', (source) => cb(source as 'main' | 'sessions')),
+    onPrevSession: (cb) => onChannel('menu:prev-session', (source) => cb(source as 'main' | 'sessions')),
+    onGotoSession: (cb) => onChannel('menu:goto-session', (index, source) => cb(index as number, source as 'main' | 'sessions')),
+    onToggleDebug: (cb) => onChannel('menu:toggle-debug', (source) => cb(source as 'main' | 'sessions')),
+    onToggleInspector: (cb) => onChannel('menu:toggle-inspector', (source) => cb(source as 'main' | 'sessions')),
+    onCloseSession: (cb) => onChannel('menu:close-session', (source) => cb(source as 'main' | 'sessions')),
     rebuild: (debugMode) => ipcRenderer.invoke('menu:rebuild', debugMode),
   },
 };

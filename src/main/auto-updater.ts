@@ -1,11 +1,12 @@
-import { app, BrowserWindow } from 'electron';
+import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { getMainWindow } from './windows';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const STARTUP_DELAY_MS = 10_000; // 10 seconds
 
 function sendToRenderer(channel: string, payload: Record<string, unknown>): void {
-  const win = BrowserWindow.getAllWindows()[0];
+  const win = getMainWindow();
   if (win && !win.isDestroyed()) {
     win.webContents.send(channel, payload);
   }

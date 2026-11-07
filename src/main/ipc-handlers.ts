@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow, app, dialog, shell, clipboard } from 'electron';
+import { getMainWindow } from './windows';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -152,7 +153,7 @@ export function resetHookWatcher(): void {
 
 export function registerIpcHandlers(): void {
   ipcMain.handle('pty:create', async (_event, sessionId: string, cwd: string, cliSessionId: string | null, isResume: boolean, extraArgs: string, providerId: ProviderId = 'claude', initialPrompt?: string, systemPrompt?: string, envVars: string = '', configDir?: string, cliName?: string, remoteHost?: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
 
     // Start hook status watcher on first PTY creation (window is guaranteed to exist)
@@ -180,7 +181,7 @@ export function registerIpcHandlers(): void {
       systemPrompt,
       envVars,
       (data) => {
-        const w = BrowserWindow.getAllWindows()[0];
+        const w = getMainWindow();
         if (w && !w.isDestroyed()) {
           w.webContents.send('pty:data', sessionId, data);
         }
@@ -189,7 +190,7 @@ export function registerIpcHandlers(): void {
         cleanupSessionStatus(sessionId);
         unregisterCodexSession(sessionId);
         if (isSilencedExit(sessionId)) return; // old PTY killed for re-spawn
-        const w = BrowserWindow.getAllWindows()[0];
+        const w = getMainWindow();
         if (w && !w.isDestroyed()) {
           w.webContents.send('pty:exit', sessionId, exitCode, signal);
         }
@@ -230,20 +231,20 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('remote:resolveDir', (_event, host: string, remotePath: string) => resolveRemoteDir(host, remotePath));
 
   ipcMain.handle('pty:createShell', (_event, sessionId: string, cwd: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
 
     spawnShellPty(
       sessionId,
       cwd,
       (data) => {
-        const w = BrowserWindow.getAllWindows()[0];
+        const w = getMainWindow();
         if (w && !w.isDestroyed()) {
           w.webContents.send('pty:data', sessionId, data);
         }
       },
       (exitCode, signal) => {
-        const w = BrowserWindow.getAllWindows()[0];
+        const w = getMainWindow();
         if (w && !w.isDestroyed()) {
           w.webContents.send('pty:exit', sessionId, exitCode, signal);
         }
@@ -352,7 +353,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.on('config:watchProject', (_event, providerId: ProviderId, projectPath: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
     const provider = getProvider(providerId);
     provider.startConfigWatcher?.(win, projectPath);
@@ -443,7 +444,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('fs:browseDirectory', async () => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return null;
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
     if (result.canceled || result.filePaths.length === 0) return null;
@@ -455,13 +456,13 @@ export function registerIpcHandlers(): void {
   // "Auto-name sessions" back on would leave existing tabs unnamed until their
   // title happened to change.
   ipcMain.on('session:resyncStatus', () => {
-    const w = BrowserWindow.getAllWindows()[0];
+    const w = getMainWindow();
     if (w) resyncAllSessions(w);
   });
 
   ipcMain.on('app:focus', () => {
     app.focus({ steal: true });
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (win && !win.isDestroyed()) {
       if (win.isMinimized()) win.restore();
       win.focus();
@@ -610,7 +611,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.on('git:watchProject', (_event, projectPath: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
     startGitWatcher(win, projectPath);
   });
@@ -899,7 +900,7 @@ export function registerIpcHandlers(): void {
     commandsDir: CTL_COMMANDS_DIR,
     resolveToken: resolveCtlToken,
     dispatch: (reqId, callerId, command) => {
-      const w = BrowserWindow.getAllWindows()[0];
+      const w = getMainWindow();
       if (w && !w.isDestroyed()) w.webContents.send('ctl:command', reqId, callerId, command);
     },
   });
