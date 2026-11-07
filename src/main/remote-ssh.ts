@@ -31,6 +31,7 @@ import { STATUS_DIR, SCRIPT_DIR, buildStatusLinePython } from './hook-status';
 import { installHooksOnly } from './claude-cli';
 import { isWin, pythonBin } from './platform';
 import { isValidSshHost } from '../shared/ssh-host';
+import type { DirEntry } from '../shared/types';
 
 export interface RemoteInfo {
   host: string;
@@ -466,23 +467,47 @@ export function resolveSshBinary(): string {
   return 'ssh';
 }
 
+/** Cap on one ssh command's stdout (a directory listing is far below it). */
+const MAX_SSH_STDOUT_BYTES = 16 * 1024 * 1024;
+/** Only the tail of stderr is ever shown, in an error message. */
+const MAX_SSH_STDERR_CHARS = 64 * 1024;
+
 const BATCH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=30'];
 
+/**
+ * Run one command on `host`. Output is collected as bytes and decoded once at
+ * the end, so a multi-byte UTF-8 character split across chunks survives. Past
+ * `MAX_SSH_STDOUT_BYTES` the process is killed and the call fails: the host is
+ * a trust boundary and must not be able to grow main-process memory unbounded.
+ */
 function runSsh(host: string, remoteCmd: string, stdin?: string, timeoutMs = 30_000): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(resolveSshBinary(), [...BATCH_OPTS, host, remoteCmd], { windowsHide: true });
-    let stdout = '';
+    const out: Buffer[] = [];
+    let outBytes = 0;
+    let overflow = false;
     let stderr = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', (d) => { stdout += d.toString(); });
-    child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.stdout.on('data', (d: Buffer) => {
+      if (overflow) return;
+      outBytes += d.length;
+      if (outBytes > MAX_SSH_STDOUT_BYTES) {
+        overflow = true;
+        child.kill();
+        return;
+      }
+      out.push(d);
+    });
+    child.stderr.on('data', (d) => { if (stderr.length < MAX_SSH_STDERR_CHARS) stderr += d.toString(); });
+    const stdout = () => Buffer.concat(out).toString('utf-8');
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolve({ code: -1, stdout, stderr: stderr || String(err) });
+      resolve({ code: -1, stdout: stdout(), stderr: stderr || String(err) });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout, stderr });
+      if (overflow) resolve({ code: -1, stdout: '', stderr: `output exceeded ${MAX_SSH_STDOUT_BYTES} bytes` });
+      else resolve({ code: code ?? -1, stdout: stdout(), stderr });
     });
     if (stdin !== undefined) child.stdin.end(stdin);
     else child.stdin.end();
@@ -525,6 +550,76 @@ export async function listRemoteDirs(host: string, remoteDir: string): Promise<s
   const res = await runSsh(host, `cd ${shQuotePath(remoteDir || '~')} 2>/dev/null && for d in */; do [ -d "$d" ] && printf '%s\\n' "\${d%/}"; done`, undefined, 15_000);
   if (res.code !== 0) return [];
   return res.stdout.split(/\r?\n/).filter(Boolean).sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * A POSIX shell script that lists every entry (dotfiles included, like the
+ * local `readdirSync`) of each absolute directory in `dirs`, in order.
+ * Output is NUL-separated records, NUL being the one byte a file name cannot
+ * hold: `D` (start of the next dir in `dirs`), `d<name>` / `f<name>`, and `!`
+ * (that dir could not be entered). A leading NUL separates the records from
+ * anything a login script printed first.
+ */
+export function buildListDirsScript(dirs: string[]): string {
+  const quoted = dirs.map(shQuote).join(' ');
+  return [
+    `printf '\\0'`,
+    `for d in ${quoted}; do`,
+    `  printf 'D\\0'`,
+    `  (cd "$d" 2>/dev/null || { printf '!\\0'; exit 0; }`,
+    `   for f in * .[!.]* ..?*; do`,
+    `     [ -e "$f" ] || [ -L "$f" ] || continue`,
+    `     if [ -d "$f" ]; then printf 'd%s\\0' "$f"; else printf 'f%s\\0' "$f"; fi`,
+    `   done)`,
+    `done`,
+  ].join('\n') + '\n';
+}
+
+/**
+ * Parse `buildListDirsScript(dirs)` output into a listing for every dir of
+ * `dirs`: null when it could not be listed or the output ended before it.
+ * Each `D` record moves to the next dir of `dirs` (dir names never come from
+ * the host, so it cannot claim another dir's listing).
+ */
+export function parseListDirsOutput(stdout: string, dirs: string[]): Record<string, DirEntry[] | null> {
+  const out: Record<string, DirEntry[] | null> = Object.fromEntries(dirs.map((d) => [d, null]));
+  const records = stdout.split(' ');
+  let next = 0;
+  let list: DirEntry[] | null = null;
+  let prefix = '';
+  // records[0] is whatever preceded the leading NUL (login-script noise).
+  for (let i = 1; i < records.length; i++) {
+    const rec = records[i];
+    if (rec === 'D') {
+      const dir = next < dirs.length ? dirs[next++] : null;
+      list = dir === null ? null : (out[dir] = []);
+      prefix = dir === null ? '' : dir.replace(/\/+$/, '');
+      continue;
+    }
+    if (list === null) continue;
+    if (rec === '!') {
+      out[dirs[next - 1]] = list = null;
+      continue;
+    }
+    const kind = rec[0];
+    const name = rec.slice(1);
+    if ((kind !== 'd' && kind !== 'f') || !name || name.includes('/')) continue;
+    list.push({ name, path: `${prefix}/${name}`, isDirectory: kind === 'd' });
+  }
+  return out;
+}
+
+/**
+ * List the entries of several absolute directories on `host` in one ssh call
+ * (the file tree of a remote project). A dir that failed, or that was not
+ * reached because ssh itself failed, maps to null.
+ */
+export async function listRemoteDirEntries(host: string, dirs: string[]): Promise<Record<string, DirEntry[] | null>> {
+  const valid = dirs.filter((d) => d.startsWith('/'));
+  if (!isValidSshHost(host) || valid.length === 0) return parseListDirsOutput('', dirs);
+  // Sent over stdin: a long dir list never hits the command-line length limit.
+  const res = await runSsh(host, 'sh -s', buildListDirsScript(valid), 20_000);
+  return { ...parseListDirsOutput('', dirs), ...parseListDirsOutput(res.code === 0 ? res.stdout : '', valid) };
 }
 
 // ---------------------------------------------------------------------------

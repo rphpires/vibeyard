@@ -8,7 +8,7 @@ import { addMcpServer, removeMcpServer } from './claude-cli';
 import type { McpServerConfig } from './claude-cli';
 import { loadState, saveState, PersistedState } from './store';
 import { startWatching, cleanupSessionStatus, resyncAllSessions } from './hook-status';
-import { resolveRemoteDir, listSshHosts, listRemoteDirs } from './remote-ssh';
+import { resolveRemoteDir, listSshHosts, listRemoteDirs, listRemoteDirEntries } from './remote-ssh';
 import { startCodexSessionWatcher, registerPendingCodexSession, unregisterCodexSession } from './codex-session-watcher';
 import { getGitStatus, getGitFiles, getGitDiff, getGitWorktrees, gitStageFile, gitUnstageFile, gitDiscardFile, getGitRemoteUrl, listGitBranches, checkoutGitBranch, createGitBranch } from './git-status';
 import { startGitWatcher, stopGitWatcher, notifyGitChanged } from './git-watcher';
@@ -228,6 +228,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('remote:listHosts', () => listSshHosts());
   ipcMain.handle('remote:listDirs', (_event, host: string, remoteDir: string) => listRemoteDirs(host, remoteDir));
   ipcMain.handle('remote:resolveDir', (_event, host: string, remotePath: string) => resolveRemoteDir(host, remotePath));
+  ipcMain.handle('remote:listDirEntries', (_event, host: string, dirs: unknown) =>
+    listRemoteDirEntries(host, Array.isArray(dirs) ? dirs.filter((d): d is string => typeof d === 'string') : []));
 
   ipcMain.handle('pty:createShell', (_event, sessionId: string, cwd: string) => {
     const win = BrowserWindow.getAllWindows()[0];

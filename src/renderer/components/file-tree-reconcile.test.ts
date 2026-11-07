@@ -7,9 +7,11 @@ vi.mock('../state.js', () => ({
 }));
 vi.mock('./modal.js', () => ({ showConfirmModal: vi.fn(), showPropertiesDialog: vi.fn() }));
 vi.mock('./board/board-context-menu.js', () => ({ showContextMenu: vi.fn() }));
+vi.mock('../open-file-reader.js', () => ({ openFileReaderChecked: vi.fn() }));
 vi.mock('../file-url.js', () => ({ pathToFileURL: (p: string) => `file://${p}` }));
 
-import { renderFileTree, _resetForTesting, DirEntry, isExpanded, FILE_MANAGER } from './file-tree.js';
+import { renderFileTree, closeFileTree, toggleFolder, _resetForTesting, DirEntry, isExpanded, FILE_MANAGER, REMOTE_POLL_MS } from './file-tree.js';
+import { openFileReaderChecked } from '../open-file-reader.js';
 import { showContextMenu, MenuOption } from './board/board-context-menu.js';
 
 // --- Fake filesystem backing window.vibeyard.fs ---
@@ -206,5 +208,141 @@ describe('show in file manager menu option', () => {
 
     options[1].action();
     expect((globalThis as any).vibeyard.fs.showInFolder).toHaveBeenCalledWith('/proj/a.ts');
+  });
+});
+
+describe('remote (SSH) project tree', () => {
+  const remoteProject = () => ({ id: 'r1', path: '/srv/app', remoteHost: 'box' } as any);
+  const fromDirContents = (dirs: string[]) => Object.fromEntries(dirs.map((d) => [d, dirContents.get(d) ?? []]));
+  const allFail = (dirs: string[]) => Object.fromEntries(dirs.map((d) => [d, null]));
+
+  /** Back window.vibeyard.remote with `result`, optionally held until `gate` resolves. */
+  function useRemote(result: (dirs: string[]) => Record<string, DirEntry[] | null> = fromDirContents, gate?: Promise<void>) {
+    const listDirEntries = vi.fn(async (_host: string, dirs: string[]) => {
+      await gate;
+      return result(dirs);
+    });
+    (globalThis as any).vibeyard.remote = { listDirEntries };
+    return listDirEntries;
+  }
+
+  async function withFakeTimers(fn: () => Promise<void>): Promise<void> {
+    vi.useFakeTimers();
+    try { await fn(); } finally { vi.useRealTimers(); }
+  }
+
+  it('lists over ssh and never touches the local fs', async () => {
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false)]);
+    const listDirEntries = useRemote();
+    const container = document.createElement('div');
+    renderFileTree(remoteProject(), container);
+    await settle();
+
+    expect(rows(container)).toEqual(['/srv/app/a.ts']);
+    expect(listDirEntries).toHaveBeenCalledWith('box', ['/srv/app']);
+    expect((globalThis as any).vibeyard.fs.listDir).not.toHaveBeenCalled();
+    expect((globalThis as any).vibeyard.fs.watchDir).not.toHaveBeenCalled();
+  });
+
+  it('polls watched folders and patches in a new file', () => withFakeTimers(async () => {
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false)]);
+    const listDirEntries = useRemote();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    renderFileTree(remoteProject(), container);
+    await settle();
+    const aNode = container.querySelector('[data-entry-path="/srv/app/a.ts"]');
+
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false), entry('b.ts', '/srv/app', false)]);
+    await vi.advanceTimersByTimeAsync(REMOTE_POLL_MS);
+    await settle();
+
+    expect(rows(container)).toEqual(['/srv/app/a.ts', '/srv/app/b.ts']);
+    expect(container.querySelector('[data-entry-path="/srv/app/a.ts"]')).toBe(aNode);
+    await vi.advanceTimersByTimeAsync(REMOTE_POLL_MS);
+    expect(listDirEntries).toHaveBeenCalledTimes(3);
+
+    // Closing the tree stops the poll.
+    closeFileTree('r1');
+    await vi.advanceTimersByTimeAsync(REMOTE_POLL_MS * 2);
+    expect(listDirEntries).toHaveBeenCalledTimes(3);
+    container.remove();
+  }));
+
+  it('does not poll a detached tree', () => withFakeTimers(async () => {
+    const listDirEntries = useRemote();
+    renderFileTree(remoteProject(), document.createElement('div'));
+    await settle();
+    await vi.advanceTimersByTimeAsync(REMOTE_POLL_MS * 3);
+    expect(listDirEntries).toHaveBeenCalledTimes(1);
+  }));
+
+  it('a listing that lands after close never falls back to the local fs', async () => {
+    dirContents.set('/srv/app', [entry('src', '/srv/app', true)]);
+    dirContents.set('/srv/app/src', [entry('x.ts', '/srv/app/src', false)]);
+    let release!: () => void;
+    useRemote(fromDirContents, new Promise<void>((r) => { release = r; }));
+    // /srv/app/src was left expanded, so the render would recurse into it.
+    toggleFolder('r1', '/srv/app/src');
+    renderFileTree(remoteProject(), document.createElement('div'));
+    closeFileTree('r1');
+    release();
+    await settle();
+
+    const fs = (globalThis as any).vibeyard.fs;
+    expect(fs.listDir).not.toHaveBeenCalled();
+    expect(fs.watchDir).not.toHaveBeenCalled();
+  });
+
+  it('loads shown expanded folders in one ssh call, skipping ones under a collapsed parent', async () => {
+    dirContents.set('/srv/app', [entry('src', '/srv/app', true), entry('docs', '/srv/app', true)]);
+    dirContents.set('/srv/app/src', [entry('lib', '/srv/app/src', true)]);
+    dirContents.set('/srv/app/src/lib', [entry('x.ts', '/srv/app/src/lib', false)]);
+    const listDirEntries = useRemote();
+    toggleFolder('r1', '/srv/app/src');
+    toggleFolder('r1', '/srv/app/src/lib');
+    toggleFolder('r1', '/srv/app/docs/old'); // its parent docs is collapsed: not shown
+    const container = document.createElement('div');
+    renderFileTree(remoteProject(), container);
+    await settle();
+
+    expect(rows(container)).toContain('/srv/app/src/lib/x.ts');
+    expect(listDirEntries).toHaveBeenCalledTimes(1);
+    expect(listDirEntries.mock.calls[0][1]).toEqual(['/srv/app', '/srv/app/src', '/srv/app/src/lib']);
+  });
+
+  it('a failed folder is not re-listed by re-renders, only retried by the poll', () => withFakeTimers(async () => {
+    const listDirEntries = useRemote(allFail);
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    renderFileTree(remoteProject(), container);
+    await settle();
+    expect(container.textContent).toBe('(could not list over SSH)');
+
+    renderFileTree(remoteProject(), container);
+    renderFileTree(remoteProject(), container);
+    await settle();
+    expect(listDirEntries).toHaveBeenCalledTimes(1);
+
+    // The host comes back: the poll recovers the folder.
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false)]);
+    listDirEntries.mockImplementation(async (_h: string, dirs: string[]) => fromDirContents(dirs));
+    await vi.advanceTimersByTimeAsync(REMOTE_POLL_MS);
+    await settle();
+    expect(rows(container)).toEqual(['/srv/app/a.ts']);
+    container.remove();
+  }));
+
+  it('offers only Copy Path, and a file click opens nothing', async () => {
+    dirContents.set('/srv/app', [entry('src', '/srv/app', true), entry('a.ts', '/srv/app', false)]);
+    useRemote();
+    const container = document.createElement('div');
+    renderFileTree(remoteProject(), container);
+    await settle();
+
+    expect(openMenu(container, '/srv/app/src').map((o) => o.label)).toEqual(['Copy Path']);
+    expect(openMenu(container, '/srv/app/a.ts').map((o) => o.label)).toEqual(['Copy Path']);
+    (container.querySelector('[data-entry-path="/srv/app/a.ts"]') as HTMLElement).dispatchEvent(new Event('click'));
+    expect(vi.mocked(openFileReaderChecked)).not.toHaveBeenCalled();
   });
 });
