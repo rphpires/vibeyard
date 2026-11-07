@@ -5,13 +5,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // its relative path and its git diff resolve against B, not the active project.
 
 const getDiff = vi.fn();
+const focusSessionWindow = vi.fn();
+const addDiffViewerSession = vi.fn((_p: string, _f: string, _a: string) => ({ id: 'new-diff', type: 'diff-viewer' }));
+let activeProjectRef: { id: string } | null = null;
 const watchDir = vi.fn();
 const projectA = { id: 'A', path: '/a', sessions: [] as Array<{ id: string }> };
 const projectB = { id: 'B', path: '/b', sessions: [{ id: 'b-diff' }] };
 
 vi.mock('../state.js', () => ({
   appState: {
-    get activeProject() { return projectA; },
+    get activeProject() { return activeProjectRef ?? projectA; },
+    addDiffViewerSession,
     projects: [projectA, projectB],
     findSessionWithProject: (id: string) => {
       for (const project of [projectA, projectB]) {
@@ -24,8 +28,10 @@ vi.mock('../state.js', () => ({
 }));
 vi.mock('../session-close.js', () => ({ closeSessionIfFileMissing: vi.fn(() => Promise.resolve(false)) }));
 vi.mock('./search-bar.js', () => ({ destroySearchBar: vi.fn() }));
+vi.mock('../session-window-handle.js', () => ({ focusSessionWindow }));
 
-const { createFileViewerPane, showFileViewerPane, reloadFileViewer, getFileViewerInstance, destroyFileViewerPane } = await import('./file-viewer.js');
+const { createFileViewerPane, showFileViewerPane, reloadFileViewer, getFileViewerInstance, destroyFileViewerPane, showFileViewer } = await import('./file-viewer.js');
+const windowState = await import('../session-window-state.js');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,5 +76,21 @@ describe('file viewer in the sessions window', () => {
     await vi.waitFor(() => expect(getDiff).toHaveBeenCalledWith('/b', 'src/x.ts', 'unstaged'));
     destroyFileViewerPane('b-diff');
     iframe.remove();
+  });
+});
+
+describe('showFileViewer (a file row of the main window panel)', () => {
+  it('brings the sessions window forward when the diff tab lands there', () => {
+    windowState.setDetachedProjectId('B');
+    activeProjectRef = projectB;
+    showFileViewer('src/x.ts', 'unstaged');
+    expect(addDiffViewerSession).toHaveBeenCalledWith('B', 'src/x.ts', 'unstaged', undefined);
+    expect(focusSessionWindow).toHaveBeenCalledTimes(1);
+
+    activeProjectRef = projectA;
+    showFileViewer('src/y.ts', 'unstaged');
+    expect(focusSessionWindow).toHaveBeenCalledTimes(1);
+    windowState.setDetachedProjectId(null);
+    activeProjectRef = null;
   });
 });

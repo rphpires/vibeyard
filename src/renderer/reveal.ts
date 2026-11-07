@@ -86,6 +86,15 @@ export function revealSession(projectId: string, sessionId: string): void {
 }
 
 /**
+ * A tab just created that the sessions view shows: bring that window forward, so a tab
+ * opened from the main window (a diff from the git panel, "+", the More menu, a file
+ * link) does not land unseen behind it. Creating it already made it the active tab.
+ */
+export function focusIfInSessionWindow(projectId: string, session: SessionRecord | undefined): void {
+  if (session && viewShowsSession('sessions', projectId, session)) focusSessionWindow();
+}
+
+/**
  * After a Back/Forward step (which already selected the tab, without touching nav
  * history): a tab of the sessions window brings that window forward.
  */

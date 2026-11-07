@@ -1,4 +1,5 @@
 import { appState } from '../state.js';
+import { focusIfInSessionWindow } from '../reveal.js';
 import { areaLabel } from '../dom-utils.js';
 import { closeSessionIfFileMissing } from '../session-close.js';
 import { destroySearchBar } from './search-bar.js';
@@ -245,7 +246,8 @@ export function getFileViewerInstance(sessionId: string): FileViewerInstance | u
 export function showFileViewer(filePath: string, area: string, worktreePath?: string): void {
   const project = appState.activeProject;
   if (!project) return;
-  appState.addDiffViewerSession(project.id, filePath, area, worktreePath);
+  // The detached project's diff tab opens in the sessions window: bring it forward.
+  focusIfInSessionWindow(project.id, appState.addDiffViewerSession(project.id, filePath, area, worktreePath));
 }
 
 /** Reload the diff content for a given session (e.g. after git changes) */

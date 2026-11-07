@@ -1,7 +1,7 @@
 import { appState } from './state.js';
 import { resolveProjectFilePath } from './state/specialized-sessions.js';
-import { getDetachedProjectId, viewShowsSession } from './session-window-state.js';
-import { focusSessionWindow } from './session-window-handle.js';
+import { getDetachedProjectId } from './session-window-state.js';
+import { focusIfInSessionWindow } from './reveal.js';
 
 /**
  * The project, if some window shows it: the main window's active project, or the
@@ -72,6 +72,5 @@ export async function openFileReaderChecked(
     return;
   }
 
-  const session = appState.addFileReaderSession(projectId, fullPath, lineNumber);
-  if (session && viewShowsSession('sessions', projectId, session)) focusSessionWindow();
+  focusIfInSessionWindow(projectId, appState.addFileReaderSession(projectId, fullPath, lineNumber));
 }

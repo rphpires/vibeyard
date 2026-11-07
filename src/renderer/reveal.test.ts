@@ -155,6 +155,30 @@ describe('Ctrl+T from the sessions window', () => {
   });
 });
 
+describe('a tab created from the main window that lands in the sessions window', () => {
+  it('quickNewSession in the detached project brings the sessions window forward', () => {
+    const { b } = setup();
+    quickNewSession(b.id);
+    expect(sw.focusSessionWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('quickNewSession in a project shown in main does not', () => {
+    const { a } = setup();
+    quickNewSession(a.id);
+    expect(sw.focusSessionWindow).not.toHaveBeenCalled();
+  });
+
+  it('focusIfInSessionWindow only for a tab the sessions view shows', () => {
+    const { a, a1, b, b1 } = setup();
+    reveal.focusIfInSessionWindow(a.id, a1);
+    expect(sw.focusSessionWindow).not.toHaveBeenCalled();
+    reveal.focusIfInSessionWindow(b.id, undefined);
+    expect(sw.focusSessionWindow).not.toHaveBeenCalled();
+    reveal.focusIfInSessionWindow(b.id, b1);
+    expect(sw.focusSessionWindow).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('revealSession / revealProject', () => {
   it('revealSession of a sessions-window session focuses that window and keeps the main project', () => {
     const { a, b } = setup();

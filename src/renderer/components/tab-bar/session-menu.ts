@@ -13,6 +13,7 @@ import { resolveRunLocation } from '../../run-location.js';
 import { basename } from '../../../shared/platform.js';
 import { viewProject, type TabBarView } from './views.js';
 import { viewOwnsLayout } from '../../session-window-state.js';
+import { focusIfInSessionWindow } from '../../reveal.js';
 
 /** The project with this id, or the active project when no id is given. */
 function projectById(projectId?: string): ProjectRecord | undefined {
@@ -30,7 +31,7 @@ export function quickNewSession(projectId?: string, doc: Document = document): v
   // The Temporary project has no folder of its own: every session needs one picked.
   if (project.temporary) { void promptNewSession(undefined, { projectId: project.id, doc }); return; }
   (doc.activeElement as HTMLElement | null)?.blur?.();
-  appState.addSession(project.id, defaultSessionName(project));
+  focusIfInSessionWindow(project.id, appState.addSession(project.id, defaultSessionName(project)));
 }
 
 // "More" overflow menu. Deliberately excludes actions that have their own
@@ -257,6 +258,7 @@ export async function promptNewSession(
       project.defaultArgs = values['keep-args'] === 'true' ? (args || undefined) : undefined;
       project.defaultEnv = values['keep-env'] === 'true' ? (envVars || undefined) : undefined;
       const session = appState.addSession(project.id, name, args, providerId, profileId, envVars);
+      focusIfInSessionWindow(project.id, session);
       if (session && onCreated) onCreated(session);
       return;
     }
@@ -293,5 +295,6 @@ function addMcpInspector(projectId?: string): void {
   if (!project) return;
 
   const inspectorNum = nextNumberFor(MCP_INSPECTOR_NAME_KEY, project);
-  appState.addMcpInspectorSession(project.id, t('tab.newMcpInspector.defaultName', { num: inspectorNum }));
+  const session = appState.addMcpInspectorSession(project.id, t('tab.newMcpInspector.defaultName', { num: inspectorNum }));
+  focusIfInSessionWindow(project.id, session);
 }
