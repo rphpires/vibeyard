@@ -33,6 +33,7 @@ import {
   type TabBarView,
 } from './components/tab-bar.js';
 import { fitAllVisible } from './components/terminal-pane.js';
+import { attachFilePrompt } from './components/file-prompt.js';
 import { installDocChrome } from './doc-chrome.js';
 import { shortcutManager } from './shortcuts.js';
 import { t } from './i18n.js';
@@ -157,6 +158,8 @@ function build(win: Window): OpenWindow {
   for (const link of Array.from(doc.querySelectorAll('link[rel="stylesheet"]'))) {
     link.addEventListener('load', scheduleFit);
   }
+  // "Ask AI" on a selection in a file reader / diff pane of this window.
+  const detachFilePrompt = attachFilePrompt(doc);
 
   const w: OpenWindow = {
     win,
@@ -169,6 +172,7 @@ function build(win: Window): OpenWindow {
       win.removeEventListener('resize', scheduleFit);
       win.removeEventListener('pagehide', onPagehide);
       doc.removeEventListener('keydown', onKeydown);
+      detachFilePrompt();
     },
   };
   return w;

@@ -27,12 +27,21 @@ let popoverTextarea: HTMLTextAreaElement | null = null;
 let popoverPlanModeCheckbox: HTMLInputElement | null = null;
 let currentCtx: PaneContext | null = null;
 
+// Panes of the sessions window are another realm's nodes: no `instanceof` on them.
+function isElementNode(node: unknown): node is Element {
+  return !!node && (node as Node).nodeType === 1;
+}
+
+function isNode(node: unknown): node is Node {
+  return !!node && typeof (node as Node).nodeType === 'number';
+}
+
 function findFilePane(node: Node | null): { el: HTMLElement; kind: PaneKind; bodyEl: HTMLElement } | null {
-  let el: Element | null = node instanceof Element ? node : node?.parentElement ?? null;
-  while (el && !(el instanceof HTMLElement && el.dataset.paneKind)) {
+  let el: HTMLElement | null = (isElementNode(node) ? node : node?.parentElement ?? null) as HTMLElement | null;
+  while (el && !el.dataset?.paneKind) {
     el = el.parentElement;
   }
-  if (!(el instanceof HTMLElement)) return null;
+  if (!el) return null;
   const kind = el.dataset.paneKind;
   if (kind !== 'file-viewer' && kind !== 'file-reader') return null;
   const bodySelector = kind === 'file-viewer' ? '.file-viewer-body' : '.file-reader-body';
@@ -42,7 +51,7 @@ function findFilePane(node: Node | null): { el: HTMLElement; kind: PaneKind; bod
 }
 
 function findLineNumber(node: Node | null): number | undefined {
-  let el: Element | null = node instanceof Element ? node : node?.parentElement ?? null;
+  let el: Element | null = isElementNode(node) ? node : node?.parentElement ?? null;
   while (el && !el.classList?.contains('file-reader-line')) el = el.parentElement;
   if (!el) return undefined;
   const numEl = el.querySelector('.file-reader-line-num');
@@ -50,8 +59,8 @@ function findLineNumber(node: Node | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function getPaneContext(): PaneContext | null {
-  const sel = window.getSelection();
+function getPaneContext(doc: Document): PaneContext | null {
+  const sel = doc.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
   const text = sel.toString();
   if (!text.trim()) return null;
@@ -118,8 +127,8 @@ function clampToPane(el: HTMLElement, paneRect: DOMRect, left: number, top: numb
   el.style.top = `${top}px`;
 }
 
-function getSelectionRect(): DOMRect | null {
-  const sel = window.getSelection();
+function getSelectionRect(doc: Document): DOMRect | null {
+  const sel = doc.getSelection();
   if (!sel || sel.rangeCount === 0) return null;
   const rects = sel.getRangeAt(0).getClientRects();
   if (rects.length === 0) return sel.getRangeAt(0).getBoundingClientRect();
@@ -233,7 +242,7 @@ function openComposer(ctx: PaneContext): void {
   p.style.display = 'flex';
 
   popoverInfo!.innerHTML = '';
-  const tag = document.createElement('div');
+  const tag = ctx.paneEl.ownerDocument.createElement('div');
   tag.className = 'inspect-tag-line';
   const locLabel =
     ctx.kind === 'file-reader' && ctx.lineStart
@@ -247,7 +256,7 @@ function openComposer(ctx: PaneContext): void {
   popoverPlanModeCheckbox!.checked = true;
 
   const paneRect = ctx.paneEl.getBoundingClientRect();
-  const selRect = getSelectionRect();
+  const selRect = getSelectionRect(ctx.paneEl.ownerDocument);
   p.style.minWidth = '0';
   p.style.maxWidth = `${Math.max(0, paneRect.width - 16)}px`;
   p.style.maxHeight = `${Math.max(0, paneRect.height - 16)}px`;
@@ -283,7 +292,8 @@ function composeOrNull(): { prompt: string; instruction: string; ctx: PaneContex
 function submit(): void {
   const composed = composeOrNull();
   if (!composed) return;
-  const project = appState.activeProject;
+  // The pane's own project: in the sessions window it is not the active one.
+  const project = appState.projectOfSession(composed.ctx.sessionId);
   if (!project) return;
   const fileName = composed.ctx.filePath.split('/').pop() || 'file';
   const sessionName = `${fileName}: ${composed.instruction.slice(0, 30)}`;
@@ -301,11 +311,11 @@ function submitToCustomSession(): void {
   promptNewSession((session) => {
     setPendingPrompt(session.id, composed.prompt);
     dismiss();
-  });
+  }, { projectId: appState.projectOfSession(composed.ctx.sessionId)?.id, doc: composed.ctx.paneEl.ownerDocument });
 }
 
 function showBubbleForSelection(ctx: PaneContext): void {
-  const selRect = getSelectionRect();
+  const selRect = getSelectionRect(ctx.paneEl.ownerDocument);
   if (!selRect) return;
   const b = ensureBubble();
   if (b.parentElement !== ctx.paneEl) ctx.paneEl.appendChild(b);
@@ -321,15 +331,16 @@ let checkPending = false;
 
 function onMouseUp(e: MouseEvent): void {
   const t = e.target;
-  if (!(t instanceof Element)) return;
+  if (!isElementNode(t)) return;
   if (popover?.contains(t) || askBubble?.contains(t)) return;
   if (!t.closest(FILE_PANE_SELECTOR)) return;
   if (checkPending) return;
   checkPending = true;
+  const doc = t.ownerDocument;
   // Defer so the browser has finalized the selection by the time we read it.
   setTimeout(() => {
     checkPending = false;
-    const ctx = getPaneContext();
+    const ctx = getPaneContext(doc);
     if (!ctx) {
       hideBubble();
       return;
@@ -339,15 +350,18 @@ function onMouseUp(e: MouseEvent): void {
   }, 0);
 }
 
-function onSelectionChange(): void {
+function onSelectionChange(e: Event): void {
   if (popover && popover.style.display !== 'none') return;
-  const sel = window.getSelection();
+  const doc = e.currentTarget as Document;
+  // Only the document showing the bubble: a selection elsewhere does not hide it.
+  if (askBubble && askBubble.ownerDocument !== doc) return;
+  const sel = doc.getSelection();
   if (!sel || sel.isCollapsed) hideBubble();
 }
 
 function onDocMouseDown(e: MouseEvent): void {
   const t = e.target;
-  if (!(t instanceof Node)) return;
+  if (!isNode(t)) return;
   if (popover && popover.style.display !== 'none' && !popover.contains(t) && !askBubble?.contains(t)) {
     dismiss();
   }
@@ -359,9 +373,25 @@ function onKeyDown(e: KeyboardEvent): void {
   }
 }
 
+/**
+ * Listen for selections in file panes of `doc`: the main document at startup, the
+ * sessions window's document while it is open. Returns the detach function.
+ */
+export function attachFilePrompt(doc: Document): () => void {
+  doc.addEventListener('mouseup', onMouseUp);
+  doc.addEventListener('selectionchange', onSelectionChange);
+  doc.addEventListener('mousedown', onDocMouseDown, true);
+  doc.addEventListener('keydown', onKeyDown);
+  return () => {
+    doc.removeEventListener('mouseup', onMouseUp);
+    doc.removeEventListener('selectionchange', onSelectionChange);
+    doc.removeEventListener('mousedown', onDocMouseDown, true);
+    doc.removeEventListener('keydown', onKeyDown);
+    // A bubble or composer left in a document that stops listening could never close.
+    if (askBubble?.ownerDocument === doc || popover?.ownerDocument === doc) dismiss();
+  };
+}
+
 export function initFilePrompt(): void {
-  document.addEventListener('mouseup', onMouseUp);
-  document.addEventListener('selectionchange', onSelectionChange);
-  document.addEventListener('mousedown', onDocMouseDown, true);
-  document.addEventListener('keydown', onKeyDown);
+  attachFilePrompt(document);
 }

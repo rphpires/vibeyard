@@ -167,7 +167,12 @@ class AppState {
     return undefined;
   }
 
-  private findProjectBySession(sessionId: string): ProjectRecord | undefined {
+  /**
+   * The project owning a session. Pane features use it rather than `activeProject`:
+   * a pane of the project detached into the sessions window belongs to that project
+   * while the main window shows another one.
+   */
+  projectOfSession(sessionId: string): ProjectRecord | undefined {
     return this.findSessionWithProject(sessionId)?.project;
   }
 
@@ -181,7 +186,7 @@ class AppState {
   }
 
   private stepNav(direction: 1 | -1): NavTarget | undefined {
-    const id = this.nav.findNextValid(direction, (sid) => !!this.findProjectBySession(sid));
+    const id = this.nav.findNextValid(direction, (sid) => !!this.projectOfSession(sid));
     if (!id) return undefined;
     const { project, session } = this.findSessionWithProject(id)!;
     // A tab of the sessions window is shown there: the main window keeps its project.

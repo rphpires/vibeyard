@@ -49,6 +49,10 @@ vi.mock('./shortcuts.js', () => shortcuts);
 
 vi.mock('./i18n.js', () => ({ t: (key: string) => key }));
 
+const filePromptDetach = vi.fn();
+const filePrompt = { attachFilePrompt: vi.fn(() => filePromptDetach) };
+vi.mock('./components/file-prompt.js', () => filePrompt);
+
 let onClosedCb: (() => void) | null = null;
 const sessionWindowApi = {
   focus: vi.fn(),
@@ -228,6 +232,14 @@ describe('session window controller', () => {
     fakeState.projects[1].name = 'Bee';
     emit('project-changed');
     expect(sessionWindowApi.setTitle).toHaveBeenLastCalledWith('Bee — Vibeyard');
+  });
+
+  it('the "Ask AI" selection bubble listens on the child document while it is open', () => {
+    sw.openSessionWindow('B');
+    expect(filePrompt.attachFilePrompt).toHaveBeenCalledWith(childWin().document);
+    expect(filePromptDetach).not.toHaveBeenCalled();
+    sw.closeSessionWindow();
+    expect(filePromptDetach).toHaveBeenCalledTimes(1);
   });
 
   it('a resize of the child window refits the panes of its document', () => {
