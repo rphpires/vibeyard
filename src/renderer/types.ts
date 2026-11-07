@@ -32,6 +32,12 @@ export interface VibeyardApi {
     onSessionName(callback: (sessionId: string, name: string, cliSessionId: string) => void): () => void;
     resyncStatus(): void;
   };
+  sessionWindow: {
+    focus(): void;
+    close(): void;
+    setTitle(title: string): void;
+    onClosed(callback: () => void): () => void;
+  };
   ctl: {
     onCommand(callback: (reqId: string, callerId: string, command: CtlCommand) => void): () => void;
     reply(reqId: string, result: CtlResult): void;

@@ -38,6 +38,12 @@ export interface VibeyardApi {
     onToolFailure(callback: (sessionId: string, data: ToolFailureData) => void): () => void;
     onInspectorEvents(callback: (sessionId: string, events: InspectorEvent[]) => void): () => void;
   };
+  sessionWindow: {
+    focus(): void;
+    close(): void;
+    setTitle(title: string): void;
+    onClosed(callback: () => void): () => void;
+  };
   ctl: {
     onCommand(callback: (reqId: string, callerId: string, command: CtlCommand) => void): () => void;
     reply(reqId: string, result: CtlResult): void;
@@ -241,6 +247,12 @@ const api: VibeyardApi = {
     onInspectorEvents: (callback) =>
       onChannel('session:inspectorEvents', (sessionId, events) =>
         callback(sessionId as string, events as InspectorEvent[])),
+  },
+  sessionWindow: {
+    focus: () => ipcRenderer.send('sessionWindow:focus'),
+    close: () => ipcRenderer.send('sessionWindow:close'),
+    setTitle: (title) => ipcRenderer.send('sessionWindow:setTitle', title),
+    onClosed: (callback) => onChannel('sessionWindow:closed', () => callback()),
   },
   ctl: {
     onCommand: (callback) =>

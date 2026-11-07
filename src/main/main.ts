@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, powerMonitor, shell } from 'electron';
+import { app, BrowserWindow, dialog, powerMonitor, screen, shell } from 'electron';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { registerIpcHandlers, resetHookWatcher, getCtlServer } from './ipc-handlers';
@@ -6,7 +6,7 @@ import { installCtlScript } from './ctl-script';
 import { stripInheritedCtlEnv } from './ctl-tokens';
 import { killAllPtys } from './pty-manager';
 import { stopAllRemoteMirrors } from './remote-ssh';
-import { flushState, loadState } from './store';
+import { flushState, loadState, saveSessionWindowBounds } from './store';
 import { createAppMenu } from './menu';
 import { restartAndResync } from './hook-status';
 import { initProviders, getAllProviders } from './providers/registry';
@@ -17,7 +17,8 @@ import { checkPythonAvailable } from './prerequisites';
 import { isMac } from './platform';
 import { isCloseConfirmed, setCloseConfirmed } from './close-state';
 import { isHttpUrl } from '../shared/url';
-import { getMainWindow, setMainWindow } from './windows';
+import { getMainWindow, setMainWindow, getSessionWindow, setSessionWindow } from './windows';
+import { isSessionWindowOpen, resolveSessionWindowBounds } from './session-window';
 
 // Before anything spawns: never pass a parent Vibeyard tab's ctl identity on.
 stripInheritedCtlEnv();
@@ -33,13 +34,14 @@ function requestConfirmClose(): void {
 }
 
 function createWindow(): void {
+  const iconPath = path.join(__dirname, '..', '..', '..', 'build', 'icon.png');
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
     minHeight: 500,
     title: 'Vibeyard',
-    icon: path.join(__dirname, '..', '..', '..', 'build', 'icon.png'),
+    icon: iconPath,
     backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, '..', '..', 'preload', 'preload', 'preload.js'),
@@ -56,9 +58,56 @@ function createWindow(): void {
   mainWindow.loadFile(indexPath);
 
   // Open external links in default browser instead of inside the app
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // The one window the renderer may open: the sessions window (window.open('about:blank', name)).
+    if (isSessionWindowOpen(url, frameName) && !getSessionWindow()) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          ...resolveSessionWindowBounds(loadState().sessionWindowBounds, screen.getAllDisplays(), mainWindow.getBounds()),
+          minWidth: 500,
+          minHeight: 300,
+          title: 'Vibeyard',
+          icon: iconPath,
+          backgroundColor: '#000000',
+          autoHideMenuBar: true,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            webviewTag: true, // browser-tab panes may be moved here
+          },
+        },
+      };
+    }
     if (isHttpUrl(url)) shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('did-create-window', (child) => {
+    setSessionWindow(child);
+    // Only about:blank is ever allowed here; everything else is blocked (external http opens in the browser).
+    child.webContents.on('will-navigate', (event, navUrl) => {
+      if (navUrl === 'about:blank') return;
+      event.preventDefault();
+      if (isHttpUrl(navUrl)) shell.openExternal(navUrl);
+    });
+    let boundsTimer: ReturnType<typeof setTimeout> | null = null;
+    const saveBounds = () => {
+      if (boundsTimer) clearTimeout(boundsTimer);
+      boundsTimer = setTimeout(() => {
+        boundsTimer = null;
+        if (child.isDestroyed() || child.isMinimized() || child.isFullScreen()) return;
+        saveSessionWindowBounds(child.getNormalBounds());
+      }, 500);
+    };
+    child.on('move', saveBounds);
+    child.on('resize', saveBounds);
+    child.on('closed', () => {
+      if (boundsTimer) clearTimeout(boundsTimer);
+      setSessionWindow(null);
+      const main = getMainWindow();
+      if (main) main.webContents.send('sessionWindow:closed');
+    });
   });
 
   // The app document is the ONLY navigation target we ever allow. A stray anchor
@@ -115,6 +164,9 @@ function createWindow(): void {
       requestConfirmClose();
       return;
     }
+    // Confirmed close: take the sessions window down with the main one (it has no confirm flow).
+    const sessions = getSessionWindow();
+    if (sessions) sessions.close();
     flushState();
   });
 

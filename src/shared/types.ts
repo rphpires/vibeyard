@@ -495,6 +495,8 @@ export interface PersistedState {
   starPromptDismissed?: boolean;
   discussionsLastSeen?: string;
   team?: TeamData;
+  /** Sessions window bounds. Written by the main process; renderer saves must not drop it. */
+  sessionWindowBounds?: { x: number; y: number; width: number; height: number };
   /** Global, provider-scoped CLI profiles (e.g. Claude work/personal config dirs). */
   profiles?: Profile[];
 }

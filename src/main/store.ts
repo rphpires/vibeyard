@@ -38,7 +38,22 @@ export function loadState(): PersistedState {
   return defaultState();
 }
 
-export function saveState(state: PersistedState): void {
+/**
+ * Fields owned by the main process. The renderer saves the whole state via store:save and
+ * may hold a stale copy (or none), so its payload must not wipe them.
+ */
+export function preserveMainOwnedFields(incoming: PersistedState, known: PersistedState | null): PersistedState {
+  if (!known || incoming.sessionWindowBounds || !known.sessionWindowBounds) return incoming;
+  return { ...incoming, sessionWindowBounds: known.sessionWindowBounds };
+}
+
+/** Persist the sessions window bounds (main-process owned) on top of the freshest known state. */
+export function saveSessionWindowBounds(bounds: NonNullable<PersistedState['sessionWindowBounds']>): void {
+  saveState({ ...(lastState ?? loadState()), sessionWindowBounds: bounds });
+}
+
+export function saveState(incoming: PersistedState): void {
+  const state = preserveMainOwnedFields(incoming, lastState);
   if (saveTimer) {
     clearTimeout(saveTimer);
   }

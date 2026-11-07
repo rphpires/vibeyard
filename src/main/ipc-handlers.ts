@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow, app, dialog, shell, clipboard } from 'electron';
-import { getMainWindow } from './windows';
+import { getMainWindow, getSessionWindow } from './windows';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -444,7 +444,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('fs:browseDirectory', async () => {
-    const win = getMainWindow();
+    const win = BrowserWindow.getFocusedWindow() ?? getMainWindow();
     if (!win) return null;
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
     if (result.canceled || result.filePaths.length === 0) return null;
@@ -458,6 +458,23 @@ export function registerIpcHandlers(): void {
   ipcMain.on('session:resyncStatus', () => {
     const w = getMainWindow();
     if (w) resyncAllSessions(w);
+  });
+
+  ipcMain.on('sessionWindow:focus', () => {
+    const win = getSessionWindow();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    win.moveTop();
+  });
+
+  ipcMain.on('sessionWindow:close', () => {
+    getSessionWindow()?.close();
+  });
+
+  ipcMain.on('sessionWindow:setTitle', (_event, title: unknown) => {
+    if (typeof title === 'string') getSessionWindow()?.setTitle(title);
   });
 
   ipcMain.on('app:focus', () => {
