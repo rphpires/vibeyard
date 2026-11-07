@@ -29,6 +29,7 @@ export function loadState(): PersistedState {
       if (file !== STATE_FILE) {
         console.warn('Recovered state from temp file');
       }
+      if (!boundsSeeded) setKnownSessionWindowBounds(parsed.sessionWindowBounds);
       return parsed;
     } catch {
       continue;
@@ -42,18 +43,32 @@ export function loadState(): PersistedState {
  * Fields owned by the main process. The renderer saves the whole state via store:save and
  * may hold a stale copy (or none), so its payload must not wipe them.
  */
-export function preserveMainOwnedFields(incoming: PersistedState, known: PersistedState | null): PersistedState {
-  if (!known || incoming.sessionWindowBounds || !known.sessionWindowBounds) return incoming;
-  return { ...incoming, sessionWindowBounds: known.sessionWindowBounds };
+type Bounds = NonNullable<PersistedState['sessionWindowBounds']>;
+
+// Main-side authoritative value: seeded from disk on first loadState, updated only by
+// saveSessionWindowBounds. The renderer's snapshot carries the startup value, so it is always overwritten.
+let knownBounds: Bounds | undefined;
+let boundsSeeded = false;
+
+export function setKnownSessionWindowBounds(bounds: Bounds | undefined): void {
+  knownBounds = bounds;
+  boundsSeeded = true;
+}
+
+export function preserveMainOwnedFields(incoming: PersistedState, known: Bounds | undefined): PersistedState {
+  if (!known) return incoming;
+  return { ...incoming, sessionWindowBounds: known };
 }
 
 /** Persist the sessions window bounds (main-process owned) on top of the freshest known state. */
-export function saveSessionWindowBounds(bounds: NonNullable<PersistedState['sessionWindowBounds']>): void {
-  saveState({ ...(lastState ?? loadState()), sessionWindowBounds: bounds });
+export function saveSessionWindowBounds(bounds: Bounds): void {
+  const base = lastState ?? loadState();
+  setKnownSessionWindowBounds(bounds);
+  saveState({ ...base, sessionWindowBounds: bounds });
 }
 
 export function saveState(incoming: PersistedState): void {
-  const state = preserveMainOwnedFields(incoming, lastState);
+  const state = preserveMainOwnedFields(incoming, knownBounds);
   if (saveTimer) {
     clearTimeout(saveTimer);
   }

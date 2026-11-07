@@ -36,6 +36,7 @@ export interface VibeyardApi {
     focus(): void;
     close(): void;
     setTitle(title: string): void;
+    setZoom(factor: number): void;
     onClosed(callback: () => void): () => void;
   };
   ctl: {

@@ -31,6 +31,7 @@ import { isGhAvailable, listPullRequests, listIssues, detectRepo } from './githu
 import { expandUserPath, isBinaryBuffer, isLikelyBinaryFile, isMacPackagePath, BINARY_SNIFF_BYTES } from './fs-utils';
 import { isLinux, isMac, isWin } from './platform';
 import { listProfiles as listChromeProfiles, runImport as runChromeImport, clearImportedCookies, getCookieCount } from './chrome-import/importer';
+import { ZOOM_MIN, ZOOM_MAX } from '../shared/types';
 import type { ChromeImportOptions, ChromeImportProgress, ClipboardSource } from '../shared/types';
 import { shouldWarnStatusLine } from './settings-guard';
 import { buildVibeyardignoreMatcher } from './vibeyardignore';
@@ -471,6 +472,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.on('sessionWindow:close', () => {
     getSessionWindow()?.close();
+  });
+
+  ipcMain.on('sessionWindow:setZoom', (_event, factor: unknown) => {
+    if (typeof factor !== 'number' || !Number.isFinite(factor)) return;
+    getSessionWindow()?.webContents.setZoomFactor(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor)));
   });
 
   ipcMain.on('sessionWindow:setTitle', (_event, title: unknown) => {

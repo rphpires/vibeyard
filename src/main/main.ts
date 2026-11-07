@@ -85,6 +85,13 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-create-window', (child) => {
     setSessionWindow(child);
+    // The sessions window never opens further windows; http(s) goes to the default browser.
+    child.webContents.setWindowOpenHandler(({ url }) => {
+      if (isHttpUrl(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    // Match the main window's persisted zoom from the start.
+    child.webContents.setZoomFactor(loadState().preferences?.zoomFactor ?? 1);
     // Only about:blank is ever allowed here; everything else is blocked (external http opens in the browser).
     child.webContents.on('will-navigate', (event, navUrl) => {
       if (navUrl === 'about:blank') return;

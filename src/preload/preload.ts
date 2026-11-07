@@ -42,6 +42,7 @@ export interface VibeyardApi {
     focus(): void;
     close(): void;
     setTitle(title: string): void;
+    setZoom(factor: number): void;
     onClosed(callback: () => void): () => void;
   };
   ctl: {
@@ -252,6 +253,7 @@ const api: VibeyardApi = {
     focus: () => ipcRenderer.send('sessionWindow:focus'),
     close: () => ipcRenderer.send('sessionWindow:close'),
     setTitle: (title) => ipcRenderer.send('sessionWindow:setTitle', title),
+    setZoom: (factor) => ipcRenderer.send('sessionWindow:setZoom', factor),
     onClosed: (callback) => onChannel('sessionWindow:closed', () => callback()),
   },
   ctl: {

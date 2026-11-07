@@ -13,6 +13,7 @@ export function applyZoom(factor: number): void {
   if (clamped === getZoomFactor()) return;
   appState.setPreference('zoomFactor', clamped);
   window.vibeyard.zoom.set(clamped);
+  window.vibeyard.sessionWindow.setZoom(clamped);
   requestAnimationFrame(() => fitAllVisible());
 }
 
