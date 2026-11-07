@@ -1,5 +1,6 @@
 import { createCustomSelect } from './custom-select.js';
 import { pushModal } from './modal-manager.js';
+import { requestFrameIn } from '../frame.js';
 
 export interface FieldDef {
   label: string;
@@ -178,7 +179,7 @@ export function showModal(
   // Focus first text input
   const firstInput = bodyEl.querySelector('input[type="text"]') as HTMLInputElement | null;
   if (firstInput) {
-    requestAnimationFrame(() => {
+    requestFrameIn(doc, () => {
       firstInput.focus();
       firstInput.select();
     });
@@ -253,7 +254,7 @@ export function showConfirmDialog(
 
   overlay.classList.remove('hidden');
 
-  requestAnimationFrame(() => {
+  requestFrameIn(activeDoc, () => {
     btnCancel.focus();
   });
 
@@ -331,7 +332,7 @@ export function showPropertiesDialog(
 
   overlay.classList.remove('hidden');
 
-  requestAnimationFrame(() => { btnConfirm.focus(); });
+  requestFrameIn(activeDoc, () => { btnConfirm.focus(); });
 
   cleanup();
 

@@ -1,3 +1,4 @@
+import type { BrowserWindow } from 'electron';
 import { SESSION_WINDOW_FRAME } from '../shared/session-window';
 
 export interface Bounds { x: number; y: number; width: number; height: number }
@@ -35,4 +36,15 @@ export function resolveSessionWindowBounds(
     width,
     height,
   };
+}
+
+/**
+ * The sessions window has no code of its own: the main renderer drives it, rAF and
+ * timers included. Chromium throttles a minimized or covered window's renderer, so
+ * while a sessions window exists main must not be throttled, or a Ctrl+T there
+ * leaves the PTY unspawned and the dialog unfocused until main is shown again.
+ */
+export function syncMainThrottling(main: BrowserWindow | null, sessionWindowOpen: boolean): void {
+  if (!main || main.isDestroyed()) return;
+  main.webContents.setBackgroundThrottling(!sessionWindowOpen);
 }

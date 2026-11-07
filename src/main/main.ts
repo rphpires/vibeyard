@@ -18,7 +18,7 @@ import { isMac } from './platform';
 import { isCloseConfirmed, setCloseConfirmed } from './close-state';
 import { isHttpUrl } from '../shared/url';
 import { getMainWindow, setMainWindow, getSessionWindow, setSessionWindow } from './windows';
-import { isSessionWindowOpen, resolveSessionWindowBounds } from './session-window';
+import { isSessionWindowOpen, resolveSessionWindowBounds, syncMainThrottling } from './session-window';
 
 // Before anything spawns: never pass a parent Vibeyard tab's ctl identity on.
 stripInheritedCtlEnv();
@@ -85,6 +85,8 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-create-window', (child) => {
     setSessionWindow(child);
+    // Main's renderer drives the child (its frames and timers): keep it unthrottled meanwhile.
+    syncMainThrottling(getMainWindow(), true);
     // The sessions window never opens further windows; http(s) goes to the default browser.
     child.webContents.setWindowOpenHandler(({ url }) => {
       if (isHttpUrl(url)) shell.openExternal(url);
@@ -113,6 +115,7 @@ function createWindow(): void {
       if (boundsTimer) clearTimeout(boundsTimer);
       setSessionWindow(null);
       const main = getMainWindow();
+      syncMainThrottling(main, false);
       if (main) main.webContents.send('sessionWindow:closed');
     });
   });

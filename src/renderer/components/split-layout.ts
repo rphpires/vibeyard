@@ -32,6 +32,7 @@ import {
   disconnectInspector,
 } from './mcp-inspector.js';
 import { isInspectorOpen } from './session-inspector.js';
+import { requestFrameIn } from '../frame.js';
 import {
   createFileViewerPane,
   destroyFileViewerPane,
@@ -210,9 +211,14 @@ function panesForView(view: LayoutView, project: ProjectRecord): string[] {
   });
 }
 
+/** The inspector panel lives only in the main window; the sessions view never makes room for it. */
+function inspectorOpenFor(view: LayoutView): boolean {
+  return view.kind === 'main' && isInspectorOpen();
+}
+
 /** Set the container's layout class while preserving the inspector-open class if active. */
 function setContainerClass(view: LayoutView, cls: string): void {
-  const hasInspector = isInspectorOpen();
+  const hasInspector = inspectorOpenFor(view);
   view.container.className = cls;
   if (hasInspector) view.container.classList.add('inspector-open');
 }
@@ -383,7 +389,10 @@ function onSessionAdded(data: unknown): void {
     // Spawn after layout is rendered so terminal has dimensions. A background
     // project's pane spawns too (the prompt is a startup arg, so the agent
     // starts working now); it is fitted when its project is first shown.
-    requestAnimationFrame(() => {
+    // On the frame of the window showing it: main's frames stop while main is
+    // minimized or covered, and the sessions window must not wait on them.
+    const shownIn = showing.find((v) => viewShowsSession(v.kind, project.id, session as SessionRecord));
+    requestFrameIn(shownIn?.doc ?? document, () => {
       spawnTerminal(session.id);
       for (const view of showing) {
         if (viewShowsSession(view.kind, project.id, session as SessionRecord)) fitAllVisible(view.doc);
@@ -508,7 +517,7 @@ export function renderView(view: LayoutView): void {
     }
   }
 
-  requestAnimationFrame(() => fitAllVisible(view.doc));
+  requestFrameIn(view.doc, () => fitAllVisible(view.doc));
 }
 
 /** Attach and show a non-CLI session pane. */
@@ -567,7 +576,7 @@ function renderTabMode({ view, project }: ViewRender): void {
 
   const instance = getTerminalInstance(activeId);
   if (instance && !instance.spawned && !instance.exited) {
-    requestAnimationFrame(() => {
+    requestFrameIn(view.doc, () => {
       spawnTerminal(activeId);
       fitAllVisible(view.doc);
     });
@@ -591,7 +600,7 @@ function showPanes({ view, project, panes }: ViewRender, target: HTMLElement = v
 
       const instance = getTerminalInstance(paneId);
       if (instance && !instance.spawned && !instance.exited) {
-        requestAnimationFrame(() => spawnTerminal(paneId));
+        requestFrameIn(view.doc, () => spawnTerminal(paneId));
       }
       el = instance?.element;
     }
@@ -630,7 +639,7 @@ function renderSwarmMode(r: ViewRender): void {
     ? activeSession
     : [...tabs].reverse().find(s => !isCliSession(s));
 
-  const hasInspector = isInspectorOpen();
+  const hasInspector = inspectorOpenFor(view);
 
   setContainerClass(view, 'swarm-mode');
 

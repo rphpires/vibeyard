@@ -84,3 +84,40 @@ describe('modal in another document', () => {
     closeModal();
   });
 });
+
+describe('modal focus frames', () => {
+  // The sessions window must not wait on the main window's frames: with main
+  // minimized or covered, its rAF is throttled and the dialog would open unfocused.
+  function childDoc() {
+    const other = document.implementation.createHTMLDocument('o');
+    other.body.innerHTML = OVERLAY;
+    const childRaf = vi.fn((cb: FrameRequestCallback) => { cb(0); return 1; });
+    Object.defineProperty(other, 'defaultView', { value: { requestAnimationFrame: childRaf } });
+    return { other, childRaf };
+  }
+
+  it('showModal / showConfirmDialog / showPropertiesDialog focus on the overlay document\'s own frame', async () => {
+    const { showModal, showConfirmDialog, showPropertiesDialog, closeModal } = await import('./modal');
+    const mainRaf = vi.fn(() => 0);
+    vi.stubGlobal('requestAnimationFrame', mainRaf);
+    const { other, childRaf } = childDoc();
+
+    showModal('T', [{ label: 'Name', id: 'name' }], () => {}, { doc: other });
+    expect(childRaf).toHaveBeenCalledTimes(1);
+    showConfirmDialog('T', 'msg', { onConfirm: () => {}, doc: other });
+    expect(childRaf).toHaveBeenCalledTimes(2);
+    showPropertiesDialog('T', [{ label: 'a', value: 'b' }], { doc: other });
+    expect(childRaf).toHaveBeenCalledTimes(3);
+    expect(mainRaf).not.toHaveBeenCalled();
+    closeModal();
+  });
+
+  it('the main document keeps using the global frame', async () => {
+    const { showModal, closeModal } = await import('./modal');
+    const mainRaf = vi.fn(() => 0);
+    vi.stubGlobal('requestAnimationFrame', mainRaf);
+    showModal('T', [{ label: 'Name', id: 'name' }], () => {});
+    expect(mainRaf).toHaveBeenCalledTimes(1);
+    closeModal();
+  });
+});

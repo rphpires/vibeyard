@@ -116,6 +116,7 @@ document.body.appendChild(sessionsContainer);
 const { initSplitLayout, createLayoutView, destroyLayoutView, renderLayout, evacuateLayoutView } = await import('./split-layout.js');
 const { quickNewSession } = await import('./tab-bar.js');
 const windowState = await import('../session-window-state.js');
+const inspector = await import('./session-inspector.js');
 initSplitLayout();
 
 type Session = { id: string; type?: string; cliSessionId: null; detached?: boolean };
@@ -303,6 +304,109 @@ describe('layout views', () => {
       expect(terminal.destroyTerminal).not.toHaveBeenCalled();
     } finally {
       destroyLayoutView(view);
+    }
+  });
+
+  describe('the sessions view runs on its own window\'s frames', () => {
+    // Main's rAF stops while main is minimized or covered; a sessions-window PTY
+    // must still spawn and fit, so the sessions view never queues on main's frames.
+    function childView() {
+      const otherDoc = document.implementation.createHTMLDocument('sessions');
+      const childQueue: Array<FrameRequestCallback> = [];
+      Object.defineProperty(otherDoc, 'defaultView', {
+        value: { requestAnimationFrame: (cb: FrameRequestCallback) => { childQueue.push(cb); return childQueue.length; } },
+      });
+      const container = otherDoc.createElement('div');
+      otherDoc.body.appendChild(container);
+      const view = createLayoutView('sessions', container);
+      const flushChild = (): void => { while (childQueue.length) childQueue.shift()!(0); };
+      return { otherDoc, container, view, flushChild };
+    }
+
+    it('a session added to the detached project spawns and fits on the sessions window\'s frame', () => {
+      const a = project('A', [{ id: 'fa1', cliSessionId: null }], 'fa1');
+      const b = project('B', [], null);
+      fakeState.projects = [a, b];
+      fakeState.activeProject = a;
+      windowState.setDetachedProjectId('B');
+      const { otherDoc, view, flushChild } = childView();
+      try {
+        const session = { id: 'fb1', cliSessionId: null };
+        b.sessions.push(session);
+        b.activeSessionId = 'fb1';
+        handlers['session-added']({ projectId: 'B', session });
+
+        // Nothing waits on main's frames.
+        expect(rafQueue.length).toBe(0);
+        expect(terminal.spawnTerminal).not.toHaveBeenCalled();
+        flushChild();
+        expect(terminal.spawnTerminal).toHaveBeenCalledWith('fb1');
+        expect(terminal.fitAllVisible).toHaveBeenCalledWith(otherDoc);
+      } finally {
+        destroyLayoutView(view);
+      }
+    });
+
+    it('an unspawned tab-mode or split pane of the sessions view spawns on that window\'s frame', () => {
+      const a = project('A', [{ id: 'fa2', cliSessionId: null }], 'fa2');
+      const b = project('B', [{ id: 'fb2', cliSessionId: null }, { id: 'fb3', cliSessionId: null }], 'fb2');
+      fakeState.projects = [a, b];
+      fakeState.activeProject = a;
+      windowState.setDetachedProjectId('B');
+      const { view, flushChild } = childView();
+      try {
+        renderLayout();
+        flushRaf();
+        flushChild();
+        terminal.spawnTerminal.mockClear();
+
+        // Tab mode
+        panes.get('fb2')!.spawned = false;
+        renderLayout();
+        flushRaf();
+        expect(terminal.spawnTerminal).not.toHaveBeenCalled();
+        flushChild();
+        expect(terminal.spawnTerminal).toHaveBeenCalledWith('fb2');
+
+        // Split mode
+        terminal.spawnTerminal.mockClear();
+        b.layout = { mode: 'split', splitPanes: ['fb2', 'fb3'], splitDirection: 'horizontal' };
+        panes.get('fb3')!.spawned = false;
+        renderLayout();
+        flushRaf();
+        expect(terminal.spawnTerminal).not.toHaveBeenCalledWith('fb3');
+        flushChild();
+        expect(terminal.spawnTerminal).toHaveBeenCalledWith('fb3');
+      } finally {
+        destroyLayoutView(view);
+      }
+    });
+  });
+
+  it('the inspector column and inspector-open class apply only to the main view', () => {
+    vi.mocked(inspector.isInspectorOpen).mockReturnValue(true);
+    const a = project('A', [{ id: 'ia1', cliSessionId: null }, { id: 'ia2', cliSessionId: null }], 'ia1');
+    a.layout = { mode: 'swarm', splitPanes: ['ia1', 'ia2'], splitDirection: 'horizontal' };
+    const b = project('B', [{ id: 'ib1', cliSessionId: null }, { id: 'ib2', cliSessionId: null }], 'ib1');
+    b.layout = { mode: 'swarm', splitPanes: ['ib1', 'ib2'], splitDirection: 'horizontal' };
+    fakeState.projects = [a, b];
+    fakeState.activeProject = a;
+    windowState.setDetachedProjectId('B');
+    const otherDoc = document.implementation.createHTMLDocument('sessions');
+    const container = otherDoc.createElement('div');
+    otherDoc.body.appendChild(container);
+    const view = createLayoutView('sessions', container);
+    try {
+      renderLayout();
+      expect(mainContainer.classList.contains('inspector-open')).toBe(true);
+      expect(mainContainer.style.gridTemplateColumns).toContain('var(--inspector-width');
+      expect(container.classList.contains('inspector-open')).toBe(false);
+      expect(container.style.gridTemplateColumns).not.toContain('var(--inspector-width');
+    } finally {
+      destroyLayoutView(view);
+      vi.mocked(inspector.isInspectorOpen).mockReturnValue(false);
+      a.layout = { mode: 'tabs', splitPanes: [], splitDirection: 'horizontal' };
+      renderLayout();
     }
   });
 

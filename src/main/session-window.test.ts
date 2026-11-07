@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { isSessionWindowOpen, resolveSessionWindowBounds } from './session-window';
+import { describe, it, expect, vi } from 'vitest';
+import type { BrowserWindow } from 'electron';
+import { isSessionWindowOpen, resolveSessionWindowBounds, syncMainThrottling } from './session-window';
 
 describe('isSessionWindowOpen', () => {
   it('accepts only about:blank with a numbered sessions frame name', () => {
@@ -37,5 +38,30 @@ describe('resolveSessionWindowBounds', () => {
 
   it('centers on main when nothing is saved', () => {
     expect(resolveSessionWindowBounds(undefined, displays, main)).toEqual({ x: 300, y: 200, width: 1000, height: 700 });
+  });
+});
+
+describe('syncMainThrottling', () => {
+  // The main renderer drives the sessions window (its rAF and timers), so main
+  // must keep running at full rate while a sessions window exists, even hidden.
+  function fakeMain(destroyed = false) {
+    const setBackgroundThrottling = vi.fn();
+    const win = { isDestroyed: () => destroyed, webContents: { setBackgroundThrottling } };
+    return { win: win as unknown as BrowserWindow, setBackgroundThrottling };
+  }
+
+  it('turns throttling off while the sessions window exists and back on when it closes', () => {
+    const { win, setBackgroundThrottling } = fakeMain();
+    syncMainThrottling(win, true);
+    expect(setBackgroundThrottling).toHaveBeenLastCalledWith(false);
+    syncMainThrottling(win, false);
+    expect(setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+  });
+
+  it('ignores a missing or destroyed main window', () => {
+    expect(() => syncMainThrottling(null, true)).not.toThrow();
+    const { win, setBackgroundThrottling } = fakeMain(true);
+    syncMainThrottling(win, false);
+    expect(setBackgroundThrottling).not.toHaveBeenCalled();
   });
 });
