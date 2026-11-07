@@ -94,7 +94,9 @@ function updateTitle(): void {
   const project = appState.projects.find((p) => p.id === getDetachedProjectId());
   if (!project) return;
   const title = `${project.name} — Vibeyard`;
-  if (current.doc.title !== title) current.doc.title = title;
+  // project-changed fires for every project edit: send the IPC only on a real change.
+  if (current.doc.title === title) return;
+  current.doc.title = title;
   window.vibeyard.sessionWindow.setTitle(title);
 }
 

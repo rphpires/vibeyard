@@ -256,6 +256,14 @@ describe('session window controller', () => {
     expect(sessionWindowApi.setTitle).toHaveBeenLastCalledWith('Bee — Vibeyard');
   });
 
+  it('a project-changed that leaves the title as it is sends no IPC', () => {
+    sw.openSessionWindow('B');
+    sessionWindowApi.setTitle.mockClear();
+    emit('project-changed');
+    emit('project-changed');
+    expect(sessionWindowApi.setTitle).not.toHaveBeenCalled();
+  });
+
   it('the "Ask AI" selection bubble listens on the child document while it is open', () => {
     sw.openSessionWindow('B');
     expect(filePrompt.attachFilePrompt).toHaveBeenCalledWith(childWin().document);
