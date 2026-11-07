@@ -682,8 +682,10 @@ export function showBrowserTabPane(sessionId: string, isSplit: boolean): void {
   instance.element.classList.toggle('split', isSplit);
 }
 
-export function hideAllBrowserTabPanes(): void {
+/** Hide every browser tab pane, or only those inside `within` (one layout view's container). */
+export function hideAllBrowserTabPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
   }
 }

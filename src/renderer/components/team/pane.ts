@@ -35,11 +35,13 @@ export function showTeamPane(sessionId: string, isSplit: boolean): void {
   renderTeam(instance.element);
 }
 
-export function hideAllTeamPanes(): void {
+/** Hide every team pane, or only those inside `within` (one layout view's container). */
+export function hideAllTeamPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
   }
-  hideTeamView();
+  hideTeamView(within);
 }
 
 export function destroyTeamPane(sessionId: string): void {

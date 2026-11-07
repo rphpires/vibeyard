@@ -220,8 +220,10 @@ export function showFileViewerPane(sessionId: string, isSplit: boolean): void {
   loadDiff(instance, sessionId);
 }
 
-export function hideAllFileViewerPanes(): void {
+/** Hide every file viewer pane, or only those inside `within` (one layout view's container). */
+export function hideAllFileViewerPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.style.display = 'none';
   }
 }

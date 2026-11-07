@@ -1,13 +1,16 @@
-import type { ProjectRecord } from '../../shared/types.js';
+import type { ProjectRecord, SessionRecord } from '../../shared/types.js';
 import { isCliSession, tabSessions } from '../session-utils.js';
 
-/** Toggle between 'swarm' and 'tabs' layout modes. When entering swarm, reconcile splitPanes with current CLI sessions. */
-export function toggleSwarmMode(project: ProjectRecord): void {
+/**
+ * Toggle between 'swarm' and 'tabs' layout modes. When entering swarm, reconcile splitPanes with
+ * the CLI sessions among `tabs` (default: every tab of the project; a view passes its own tabs).
+ */
+export function toggleSwarmMode(project: ProjectRecord, tabs: SessionRecord[] = tabSessions(project)): void {
   if (project.layout.mode === 'swarm') {
     project.layout.mode = 'tabs';
     return;
   }
-  const cliSessions = tabSessions(project).filter(isCliSession);
+  const cliSessions = tabs.filter(isCliSession);
   project.layout.mode = 'swarm';
   project.layout.splitPanes = project.layout.splitPanes.filter(
     (id) => cliSessions.some((s) => s.id === id),
@@ -17,18 +20,25 @@ export function toggleSwarmMode(project: ProjectRecord): void {
   }
 }
 
-/** Compute the next session id to activate when cycling. Returns null if there are no sessions. */
-export function cycleSessionId(project: ProjectRecord, direction: 1 | -1): string | null {
-  const tabs = tabSessions(project);
+/** Compute the next session id to activate when cycling within `tabs`. Returns null if there are none. */
+export function cycleSessionId(
+  project: ProjectRecord,
+  direction: 1 | -1,
+  tabs: SessionRecord[] = tabSessions(project),
+): string | null {
   if (tabs.length === 0) return null;
   const idx = tabs.findIndex((s) => s.id === project.activeSessionId);
   const next = (idx + direction + tabs.length) % tabs.length;
   return tabs[next].id;
 }
 
-/** Pick the session id at a given index, or null if out of range. */
-export function sessionIdAtIndex(project: ProjectRecord, index: number): string | null {
-  return tabSessions(project)[index]?.id ?? null;
+/** Pick the session id at a given index of `tabs`, or null if out of range. */
+export function sessionIdAtIndex(
+  project: ProjectRecord,
+  index: number,
+  tabs: SessionRecord[] = tabSessions(project),
+): string | null {
+  return tabs[index]?.id ?? null;
 }
 
 export type RemovalMode = 'all' | 'right' | 'left' | 'others';

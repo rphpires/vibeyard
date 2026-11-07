@@ -1,4 +1,4 @@
-import { appState, ProjectRecord } from '../state.js';
+import { appState, ProjectRecord, SessionRecord } from '../state.js';
 import { isUnread, onChange as onUnreadChange } from '../session-unread.js';
 import type { ProviderId } from '../../shared/types.js';
 
@@ -91,14 +91,100 @@ import { quickNewSession } from './tab-bar.js';
 import { isCliSession, sessionLocation } from '../session-utils.js';
 import { isInRelativeOrder } from './pane-order.js';
 import { shouldFocusPane, type PaneFocusMemo } from './pane-focus.js';
+import {
+  getDetachedProjectId,
+  projectIdForView,
+  viewShowsSession,
+  viewTabs,
+  type ViewKind,
+} from '../session-window-state.js';
 
-const container = document.getElementById('terminal-container')!;
+/**
+ * One place sessions are laid out: the main window's `#terminal-container`, or the
+ * sessions window's container (a second document in this same JS context). Pane
+ * registries stay global per session id; a view only decides which container a
+ * pane is attached to, and touches nothing outside its own container.
+ */
+export interface LayoutView {
+  kind: ViewKind;
+  container: HTMLElement;
+  doc: Document;
+}
+
+interface ViewState {
+  lastFocusedPane: PaneFocusMemo | null;
+  onMouseDown: (e: MouseEvent) => void;
+}
+
+const views = new Set<LayoutView>();
+const viewStates = new WeakMap<LayoutView, ViewState>();
+
+/** Register a view on `container` (its document is the container's). It is laid out by every renderLayout(). */
+export function createLayoutView(kind: ViewKind, container: HTMLElement): LayoutView {
+  const view: LayoutView = { kind, container, doc: container.ownerDocument };
+
+  // Click delegation for swarm mode: clicking a dimmed pane makes it active
+  const onMouseDown = (e: MouseEvent): void => {
+    const project = projectForView(view);
+    if (!project || layoutModeFor(view, project) !== 'swarm') return;
+
+    const paneEl = (e.target as HTMLElement).closest('.terminal-pane') as HTMLElement | null;
+    if (!paneEl) return;
+
+    const sessionId = paneEl.dataset.sessionId;
+    if (sessionId && sessionId !== project.activeSessionId) {
+      appState.setActiveSession(project.id, sessionId);
+    }
+  };
+  container.addEventListener('mousedown', onMouseDown);
+
+  viewStates.set(view, { lastFocusedPane: null, onMouseDown });
+  views.add(view);
+  return view;
+}
+
+/** Unregister a view. Its panes are left where they are; whoever owns them re-homes them. */
+export function destroyLayoutView(view: LayoutView): void {
+  const state = viewStates.get(view);
+  if (state) view.container.removeEventListener('mousedown', state.onMouseDown);
+  viewStates.delete(view);
+  views.delete(view);
+}
+
+/** The project a view shows right now. */
+function projectForView(view: LayoutView): ProjectRecord | undefined {
+  const id = projectIdForView(view.kind, appState.activeProject?.id ?? null);
+  return id ? appState.projects.find((p) => p.id === id) : undefined;
+}
+
+/** `project.layout` belongs to the view with its sessions; the main view of a detached project is always tabs. */
+function layoutModeFor(view: LayoutView, project: ProjectRecord): ProjectRecord['layout']['mode'] {
+  return view.kind === 'main' && project.id === getDetachedProjectId() ? 'tabs' : project.layout.mode;
+}
+
+/** What one renderView() works from. */
+interface ViewRender {
+  view: LayoutView;
+  project: ProjectRecord;
+  /** The view's tabs (`viewTabs`), in tab order. */
+  tabs: SessionRecord[];
+  /** The split/swarm panes this view shows, in order. */
+  panes: string[];
+}
+
+/** Split/swarm pane ids this view shows (an id with no session is kept, as before: its attach is a no-op). */
+function panesForView(view: LayoutView, project: ProjectRecord): string[] {
+  return project.layout.splitPanes.filter((id) => {
+    const session = project.sessions.find((s) => s.id === id);
+    return !session || viewShowsSession(view.kind, project.id, session);
+  });
+}
 
 /** Set the container's layout class while preserving the inspector-open class if active. */
-function setContainerClass(cls: string): void {
+function setContainerClass(view: LayoutView, cls: string): void {
   const hasInspector = isInspectorOpen();
-  container.className = cls;
-  if (hasInspector) container.classList.add('inspector-open');
+  view.container.className = cls;
+  if (hasInspector) view.container.classList.add('inspector-open');
 }
 
 const paneInstanceFor: Record<string, (id: string) => { element: HTMLElement } | undefined> = {
@@ -138,26 +224,43 @@ function ensurePaneOrder(target: HTMLElement, els: readonly (HTMLElement | null 
  * Drop the swarm grid wrapper, leaving its panes detached — callers re-attach
  * whatever must be visible, and a hidden pane is re-homed the next time it is shown.
  */
-function removeSwarmWrapper(): void {
-  container.querySelector('.swarm-grid-wrapper')?.remove();
+function removeSwarmWrapper(view: LayoutView): void {
+  view.container.querySelector('.swarm-grid-wrapper')?.remove();
 }
 
-let lastFocusedPane: PaneFocusMemo | null = null;
+/** Hide every pane inside this view's container — never another view's. */
+function hideViewPanes(view: LayoutView): void {
+  const within = view.container;
+  hideAllPanes(within);
+  hideAllInspectorPanes(within);
+  hideAllFileViewerPanes(within);
+  hideAllFileReaderPanes(within);
+  hideAllRemotePanes(within);
+  hideAllBrowserTabPanes(within);
+  hideAllProjectTabPanes(within);
+  hideAllKanbanPanes(within);
+  hideAllTeamPanes(within);
+}
 
 /** Move DOM focus into a pane, if this render is one that has any business doing so. */
-function focusPane(project: ProjectRecord, sessionId: string): void {
+function focusPane(view: LayoutView, project: ProjectRecord, sessionId: string): void {
+  const doc = view.doc;
   // Don't steal focus from an active tab rename input
-  if (document.querySelector('#tab-list .tab-name input')) return;
+  if (doc.querySelector('#tab-list .tab-name input')) return;
 
-  const activeEl = document.activeElement;
+  const state = viewStates.get(view);
+  if (!state) return;
+  const activeEl = doc.activeElement;
   const target: PaneFocusMemo = { projectId: project.id, sessionId };
-  if (!shouldFocusPane(lastFocusedPane, target, !activeEl || activeEl === document.body)) return;
+  if (!shouldFocusPane(state.lastFocusedPane, target, !activeEl || activeEl === doc.body)) return;
 
-  lastFocusedPane = target;
+  state.lastFocusedPane = target;
   setFocused(sessionId);
 }
 
 export function initSplitLayout(): void {
+  createLayoutView('main', document.getElementById('terminal-container')!);
+
   appState.on('state-loaded', renderLayout);
   appState.on('project-changed', renderLayout);
   appState.on('session-added', onSessionAdded);
@@ -166,27 +269,17 @@ export function initSplitLayout(): void {
   appState.on('layout-changed', renderLayout);
 
   onUnreadChange(() => {
-    const project = appState.activeProject;
-    if (project?.layout.mode === 'swarm') updateSwarmPaneStyles(project);
-  });
-
-  // Refit on window resize
-  window.addEventListener('resize', () => {
-    requestAnimationFrame(fitAllVisible);
-  });
-
-  // Click delegation for swarm mode: clicking a dimmed pane makes it active
-  container.addEventListener('mousedown', (e) => {
-    const project = appState.activeProject;
-    if (!project || project.layout.mode !== 'swarm') return;
-
-    const paneEl = (e.target as HTMLElement).closest('.terminal-pane') as HTMLElement | null;
-    if (!paneEl) return;
-
-    const sessionId = paneEl.dataset.sessionId;
-    if (sessionId && sessionId !== project.activeSessionId) {
-      appState.setActiveSession(project.id, sessionId);
+    for (const view of views) {
+      const project = projectForView(view);
+      if (project && layoutModeFor(view, project) === 'swarm') {
+        updateSwarmPaneStyles(project, panesForView(view, project));
+      }
     }
+  });
+
+  // Refit on window resize (the main window; the sessions window wires its own)
+  window.addEventListener('resize', () => {
+    requestAnimationFrame(() => fitAllVisible(document));
   });
 }
 
@@ -197,10 +290,10 @@ function onSessionAdded(data: unknown): void {
   // and the pane must get that project's cwd/id and its pending prompt.
   const project = appState.projects.find((p) => p.id === projectId);
   if (!project) return;
-  // Only the active project is laid out. A pane for a background project is
+  // Only projects some view shows are laid out. A pane for a background project is
   // created hidden and detached; renderLayout attaches it when the project is shown.
-  const isActive = appState.activeProject?.id === project.id;
-  const relayout = (): void => { if (isActive) renderLayout(); };
+  const showing = [...views].filter((v) => projectForView(v)?.id === project.id);
+  const relayout = (): void => { for (const view of showing) renderView(view); };
 
   if (session.type === 'file-reader') {
     createFileReaderPane(session.id, session.fileReaderPath || '', session.fileReaderLine);
@@ -251,7 +344,9 @@ function onSessionAdded(data: unknown): void {
     // starts working now); it is fitted when its project is first shown.
     requestAnimationFrame(() => {
       spawnTerminal(session.id);
-      if (isActive) fitAllVisible();
+      for (const view of showing) {
+        if (viewShowsSession(view.kind, project.id, session as SessionRecord)) fitAllVisible(view.doc);
+      }
     });
   }
 }
@@ -281,26 +376,26 @@ function onSessionRemoved(data: unknown): void {
   renderLayout();
 }
 
+/** Lay out every registered view. */
 export function renderLayout(): void {
-  const project = appState.activeProject;
+  for (const view of views) renderView(view);
+}
 
+/** Lay out one view: the project it shows (`projectIdForView`), restricted to the view's tabs. */
+export function renderView(view: LayoutView): void {
+  const project = projectForView(view);
   // Detached sessions (tab closed, session kept) are never laid out.
-  if (!project || !project.sessions.some((s) => !s.detached)) {
-    hideAllPanes();
-    hideAllInspectorPanes();
-    hideAllFileViewerPanes();
-    hideAllFileReaderPanes();
-    hideAllRemotePanes();
-    hideAllBrowserTabPanes();
-    hideAllProjectTabPanes();
-    hideAllKanbanPanes();
-    hideAllTeamPanes();
-    setContainerClass('');
-    showEmptyState(project);
+  const tabs = project ? viewTabs(view.kind, project) : [];
+
+  if (!project || tabs.length === 0) {
+    hideViewPanes(view);
+    setContainerClass(view, '');
+    showEmptyState(view, project);
     return;
   }
 
-  removeEmptyState();
+  const container = view.container;
+  removeEmptyState(view);
   // Filler cells hold nothing, so they are cheap to rebuild. The grid wrapper is
   // not dropped here: it is reused across renders (removing it would detach every
   // pane inside it), and the mode dispatch below decides when it has to go.
@@ -348,28 +443,22 @@ export function renderLayout(): void {
     }
   }
 
-  hideAllPanes();
-  hideAllInspectorPanes();
-  hideAllFileViewerPanes();
-  hideAllFileReaderPanes();
-  hideAllRemotePanes();
-  hideAllBrowserTabPanes();
-  hideAllProjectTabPanes();
-  hideAllKanbanPanes();
-  hideAllTeamPanes();
+  hideViewPanes(view);
 
-  if (project.layout.mode === 'swarm' && project.layout.splitPanes.length >= 1) {
-    renderSwarmMode(project); // owns the grid wrapper, including dropping it
+  const r: ViewRender = { view, project, tabs, panes: panesForView(view, project) };
+  const mode = layoutModeFor(view, project);
+  if (mode === 'swarm' && r.panes.length >= 1) {
+    renderSwarmMode(r); // owns the grid wrapper, including dropping it
   } else {
-    removeSwarmWrapper();
-    if (project.layout.mode === 'split' && project.layout.splitPanes.length > 1) {
-      renderSplitMode(project);
+    removeSwarmWrapper(view);
+    if (mode === 'split' && r.panes.length > 1) {
+      renderSplitMode(r);
     } else {
-      renderTabMode(project);
+      renderTabMode(r);
     }
   }
 
-  requestAnimationFrame(fitAllVisible);
+  requestAnimationFrame(() => fitAllVisible(view.doc));
 }
 
 /** Attach and show a non-CLI session pane. */
@@ -404,8 +493,9 @@ function attachNonCliPane(session: { id: string; type?: string; fileReaderLine?:
   }
 }
 
-function renderTabMode(project: ProjectRecord): void {
-  setContainerClass('');
+function renderTabMode({ view, project }: ViewRender): void {
+  const container = view.container;
+  setContainerClass(view, '');
   container.style.gridTemplateColumns = '';
   container.style.gridTemplateRows = '';
 
@@ -413,6 +503,8 @@ function renderTabMode(project: ProjectRecord): void {
   if (!activeId) return;
 
   const activeSession = project.sessions.find(s => s.id === activeId);
+  // The other view owns this tab (only possible while the project is detached).
+  if (activeSession && !viewShowsSession(view.kind, project.id, activeSession)) return;
   if (activeSession && !isCliSession(activeSession)) {
     attachNonCliPane(activeSession, container, false);
     return;
@@ -421,22 +513,22 @@ function renderTabMode(project: ProjectRecord): void {
   attachToContainer(activeId, container);
   showPane(activeId, false);
 
-  focusPane(project, activeId);
+  focusPane(view, project, activeId);
 
   const instance = getTerminalInstance(activeId);
   if (instance && !instance.spawned && !instance.exited) {
     requestAnimationFrame(() => {
       spawnTerminal(activeId);
-      fitAllVisible();
+      fitAllVisible(view.doc);
     });
   }
 }
 
 /** Attach, show, and ensure-spawn for each pane in the list. */
-function showPanes(project: ProjectRecord, target: HTMLElement = container): void {
+function showPanes({ view, project, panes }: ViewRender, target: HTMLElement = view.container): void {
   const laidOut: (HTMLElement | undefined)[] = [];
 
-  for (const paneId of project.layout.splitPanes) {
+  for (const paneId of panes) {
     const session = project.sessions.find(s => s.id === paneId);
     let el: HTMLElement | undefined;
 
@@ -460,34 +552,37 @@ function showPanes(project: ProjectRecord, target: HTMLElement = container): voi
   ensurePaneOrder(target, laidOut);
 }
 
-function focusActivePane(project: ProjectRecord): void {
-  const paneId = project.activeSessionId && project.layout.splitPanes.includes(project.activeSessionId)
+function focusActivePane({ view, project, panes }: ViewRender): void {
+  const paneId = project.activeSessionId && panes.includes(project.activeSessionId)
     ? project.activeSessionId
-    : project.layout.splitPanes[0];
-  if (paneId) focusPane(project, paneId);
+    : panes[0];
+  if (paneId) focusPane(view, project, paneId);
 }
 
-function renderSplitMode(project: ProjectRecord): void {
-  setContainerClass(`split-${project.layout.splitDirection}`);
+function renderSplitMode(r: ViewRender): void {
+  const container = r.view.container;
+  setContainerClass(r.view, `split-${r.project.layout.splitDirection}`);
   container.style.gridTemplateColumns = '';
   container.style.gridTemplateRows = '';
-  showPanes(project);
-  focusActivePane(project);
+  showPanes(r);
+  focusActivePane(r);
 }
 
-function renderSwarmMode(project: ProjectRecord): void {
-  const count = project.layout.splitPanes.length;
+function renderSwarmMode(r: ViewRender): void {
+  const { view, project, tabs } = r;
+  const container = view.container;
+  const count = r.panes.length;
   const cols = Math.ceil(Math.sqrt(count));
   const rows = Math.ceil(count / cols);
 
-  const activeSession = project.sessions.find(s => s.id === project.activeSessionId);
+  const activeSession = tabs.find(s => s.id === project.activeSessionId);
   const nonCliSession = (activeSession && !isCliSession(activeSession))
     ? activeSession
-    : [...project.sessions].reverse().find(s => !isCliSession(s));
+    : [...tabs].reverse().find(s => !isCliSession(s));
 
   const hasInspector = isInspectorOpen();
 
-  setContainerClass('swarm-mode');
+  setContainerClass(view, 'swarm-mode');
 
   const needsWrapper = nonCliSession || hasInspector;
 
@@ -503,15 +598,15 @@ function renderSwarmMode(project: ProjectRecord): void {
     // and de-select — every pane inside it on every state change.
     let gridWrapper = container.querySelector<HTMLElement>('.swarm-grid-wrapper');
     if (!gridWrapper) {
-      gridWrapper = document.createElement('div');
+      gridWrapper = view.doc.createElement('div');
       gridWrapper.className = 'swarm-grid-wrapper';
       container.appendChild(gridWrapper);
     }
     gridWrapper.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     gridWrapper.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
 
-    showPanes(project, gridWrapper);
-    appendEmptyCells(cols * rows - count, gridWrapper);
+    showPanes(r, gridWrapper);
+    appendEmptyCells(view, cols * rows - count, gridWrapper);
 
     if (nonCliSession) attachNonCliPane(nonCliSession, container, true);
 
@@ -523,23 +618,23 @@ function renderSwarmMode(project: ProjectRecord): void {
       hasInspector ? container.querySelector<HTMLElement>('#session-inspector') : null,
     ]);
   } else {
-    removeSwarmWrapper();
+    removeSwarmWrapper(view);
     container.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     container.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-    showPanes(project);
-    appendEmptyCells(cols * rows - count, container);
+    showPanes(r);
+    appendEmptyCells(view, cols * rows - count, container);
   }
 
-  updateSwarmPaneStyles(project);
-  focusActivePane(project);
+  updateSwarmPaneStyles(project, r.panes);
+  focusActivePane(r);
 }
 
-function appendEmptyCells(count: number, target: HTMLElement): void {
+function appendEmptyCells(view: LayoutView, count: number, target: HTMLElement): void {
   for (let i = 0; i < count; i++) {
-    const cell = document.createElement('div');
+    const cell = view.doc.createElement('div');
     cell.className = 'swarm-empty-cell';
 
-    const btn = document.createElement('button');
+    const btn = view.doc.createElement('button');
     btn.className = 'swarm-empty-add-btn';
     btn.textContent = '+';
     btn.title = 'New session';
@@ -550,8 +645,8 @@ function appendEmptyCells(count: number, target: HTMLElement): void {
   }
 }
 
-function updateSwarmPaneStyles(project: ProjectRecord): void {
-  for (const paneId of project.layout.splitPanes) {
+function updateSwarmPaneStyles(project: ProjectRecord, panes: readonly string[]): void {
+  for (const paneId of panes) {
     const instance = getTerminalInstance(paneId);
     if (instance) {
       const isActive = paneId === project.activeSessionId;
@@ -564,9 +659,10 @@ function updateSwarmPaneStyles(project: ProjectRecord): void {
 const plusIcon =
   '<svg viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="2.5" x2="7" y2="11.5"/><line x1="2.5" y1="7" x2="11.5" y2="7"/></svg>';
 
-function showEmptyState(project: ProjectRecord | undefined): void {
-  removeEmptyState();
-  const el = document.createElement('div');
+function showEmptyState(view: LayoutView, project: ProjectRecord | undefined): void {
+  removeEmptyState(view);
+  const doc = view.doc;
+  const el = doc.createElement('div');
   el.className = 'empty-state';
   if (!project) {
     el.innerHTML = `
@@ -574,27 +670,27 @@ function showEmptyState(project: ProjectRecord | undefined): void {
       <div class="hint">Create a project with the + button in the sidebar</div>
     `;
   } else {
-    const title = document.createElement('div');
+    const title = doc.createElement('div');
     title.className = 'empty-state-title';
     title.textContent = 'Ready when you are';
 
-    const hint = document.createElement('div');
+    const hint = doc.createElement('div');
     hint.className = 'hint';
-    const name = document.createElement('span');
+    const name = doc.createElement('span');
     name.className = 'empty-state-project';
     name.textContent = project.name;
     hint.append('No sessions running in ', name, ' yet.');
 
-    const cta = document.createElement('button');
+    const cta = doc.createElement('button');
     cta.className = 'btn-primary empty-state-cta';
     cta.innerHTML = `${plusIcon}<span>Start a session</span>`;
     cta.addEventListener('click', () => quickNewSession());
 
     el.append(title, hint, cta);
   }
-  container.appendChild(el);
+  view.container.appendChild(el);
 }
 
-function removeEmptyState(): void {
-  container.querySelector('.empty-state')?.remove();
+function removeEmptyState(view: LayoutView): void {
+  view.container.querySelector('.empty-state')?.remove();
 }

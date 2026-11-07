@@ -76,6 +76,7 @@ class FakeElement {
   style: Record<string, string> = {};
   children: FakeElement[] = [];
   classList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
+  get ownerDocument() { return globalThis.document; }
   appendChild(c: FakeElement) { this.children.push(c); return c; }
   append() {}
   addEventListener() {}

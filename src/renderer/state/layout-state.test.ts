@@ -224,3 +224,35 @@ describe('toggleSwarm() sync new CLI sessions', () => {
   });
 });
 
+
+describe('layout-state helpers scoped to a view\'s tabs', () => {
+  it('cycleSessionId cycles only within the given tabs', async () => {
+    const { cycleSessionId } = await import('./layout-state.js');
+    const { project, sessions } = addProjectWithSessions(4);
+    const tabs = [sessions[1], sessions[3]];
+    project.activeSessionId = sessions[1].id;
+    expect(cycleSessionId(project, 1, tabs)).toBe(sessions[3].id);
+    expect(cycleSessionId(project, 1, [sessions[3]])).toBe(sessions[3].id);
+    project.activeSessionId = sessions[3].id;
+    expect(cycleSessionId(project, 1, tabs)).toBe(sessions[1].id);
+    expect(cycleSessionId(project, -1, tabs)).toBe(sessions[1].id);
+    expect(cycleSessionId(project, 1, [])).toBeNull();
+  });
+
+  it('sessionIdAtIndex indexes into the given tabs', async () => {
+    const { sessionIdAtIndex } = await import('./layout-state.js');
+    const { project, sessions } = addProjectWithSessions(3);
+    expect(sessionIdAtIndex(project, 0, [sessions[2]])).toBe(sessions[2].id);
+    expect(sessionIdAtIndex(project, 1, [sessions[2]])).toBeNull();
+  });
+
+  it('toggleSwarmMode reconciles splitPanes with the given tabs only', async () => {
+    const { toggleSwarmMode } = await import('./layout-state.js');
+    const { project, sessions } = addProjectWithSessions(3);
+    project.layout.mode = 'tabs';
+    project.layout.splitPanes = [];
+    toggleSwarmMode(project, [sessions[0], sessions[2]]);
+    expect(project.layout.mode).toBe('swarm');
+    expect(project.layout.splitPanes).toEqual([sessions[0].id, sessions[2].id]);
+  });
+});

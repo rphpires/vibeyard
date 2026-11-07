@@ -412,8 +412,10 @@ function scrollToLine(instance: FileReaderInstance): void {
   });
 }
 
-export function hideAllFileReaderPanes(): void {
+/** Hide every file reader pane, or only those inside `within` (one layout view's container). */
+export function hideAllFileReaderPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.style.display = 'none';
   }
 }

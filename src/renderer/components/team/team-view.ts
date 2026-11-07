@@ -102,8 +102,9 @@ export function renderTeam(target?: HTMLElement): void {
   }
 }
 
-export function hideTeamView(): void {
-  if (teamEl) teamEl.style.display = 'none';
+/** Hide the team view, unless `within` is given and the view is not inside it. */
+export function hideTeamView(within?: HTMLElement): void {
+  if (teamEl && (!within || within.contains(teamEl))) teamEl.style.display = 'none';
 }
 
 export function destroyTeamView(): void {

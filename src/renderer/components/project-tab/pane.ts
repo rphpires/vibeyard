@@ -154,8 +154,10 @@ export function showProjectTabPane(sessionId: string, isSplit: boolean): void {
   instance.element.classList.toggle('split', isSplit);
 }
 
-export function hideAllProjectTabPanes(): void {
+/** Hide every overview pane, or only those inside `within` (one layout view's container). */
+export function hideAllProjectTabPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
   }
 }

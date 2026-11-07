@@ -370,7 +370,11 @@ export function attachToContainer(sessionId: string, container: HTMLElement): vo
     collapseArmedTextareaOnContextMenu(instance.terminal);
     loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
+    const previousDoc = instance.element.ownerDocument;
     container.appendChild(instance.element);
+    // Moving into another window's document (the sessions window): xterm only
+    // rebinds to the new window when open() runs again after the move.
+    if (container.ownerDocument !== previousDoc) instance.terminal.open(xtermWrap as HTMLElement);
   }
 }
 
@@ -391,8 +395,10 @@ export function hidePane(sessionId: string): void {
   instance.element.classList.add('hidden');
 }
 
-export function hideAllPanes(): void {
+/** Hide every terminal pane, or only those inside `within` (one layout view's container). */
+export function hideAllPanes(within?: HTMLElement): void {
   for (const [, instance] of instances) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
     instance.element.classList.remove('swarm-dimmed', 'swarm-unread');
   }
@@ -416,8 +422,10 @@ export function fitTerminal(sessionId: string): void {
   }
 }
 
-export function fitAllVisible(): void {
+/** Fit every visible pane, or only those living in `doc` (one window's document). */
+export function fitAllVisible(doc?: Document): void {
   for (const [sessionId, instance] of instances) {
+    if (doc && instance.element.ownerDocument !== doc) continue;
     if (!instance.element.classList.contains('hidden')) {
       fitTerminal(sessionId);
     }
@@ -442,10 +450,13 @@ export function setFocused(sessionId: string): void {
   // the pane (search-bar.ts) and so is indistinguishable from the terminal here.
   // That is `focusPane` in split-layout.ts's job: a render the user didn't ask for
   // never reaches this function at all.
-  const activeEl = document.activeElement;
+  //
+  // The pane may live in the sessions window, whose focus is its own document's.
+  const doc = instances.get(sessionId)?.element.ownerDocument ?? document;
+  const activeEl = doc.activeElement;
   const shouldFocusTerminal =
     !activeEl ||
-    activeEl === document.body ||
+    activeEl === doc.body ||
     !!activeEl.closest('.terminal-pane');
 
   for (const [id, instance] of instances) {

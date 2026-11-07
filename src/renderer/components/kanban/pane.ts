@@ -35,11 +35,13 @@ export function showKanbanPane(sessionId: string, isSplit: boolean): void {
   renderBoard(instance.element);
 }
 
-export function hideAllKanbanPanes(): void {
+/** Hide every kanban pane, or only those inside `within` (one layout view's container). */
+export function hideAllKanbanPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
   }
-  hideBoardView();
+  hideBoardView(within);
 }
 
 export function destroyKanbanPane(sessionId: string): void {

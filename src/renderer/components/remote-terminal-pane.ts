@@ -127,8 +127,10 @@ export function hideRemotePane(sessionId: string): void {
   instance.element.classList.add('hidden');
 }
 
-export function hideAllRemotePanes(): void {
+/** Hide every remote terminal pane, or only those inside `within` (one layout view's container). */
+export function hideAllRemotePanes(within?: HTMLElement): void {
   for (const [, instance] of instances) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
     instance.element.classList.remove('swarm-dimmed', 'swarm-unread');
   }
