@@ -120,7 +120,7 @@ export function ShellTerminalSearchBackend(sessionId: string): XtermSearchBacken
 
 const searchBars = new Map<string, { bar: HTMLDivElement; backend: SearchBackend; unsubscribe: () => void }>();
 
-export function showSearchBar(sessionId: string, backend: SearchBackend, doc: Document = document): void {
+export function showSearchBar(sessionId: string, backend: SearchBackend): void {
   const existing = searchBars.get(sessionId);
   if (existing) {
     existing.unsubscribe();
@@ -137,6 +137,9 @@ export function showSearchBar(sessionId: string, backend: SearchBackend, doc: Do
     return;
   }
 
+  // The bar goes into the pane, so it is built in the pane's document (the sessions
+  // window's when the pane sits there), whoever asked for it.
+  const doc = backend.getContainer().ownerDocument ?? document;
   const bar = doc.createElement('div');
   bar.className = 'search-bar';
 
