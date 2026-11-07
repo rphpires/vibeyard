@@ -12,6 +12,7 @@ import { getProviderCapabilities } from '../provider-availability.js';
 import { appState } from '../state.js';
 import { FilePathLinkProvider, GithubLinkProvider } from './terminal-link-provider.js';
 import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, wrapBracketedPaste } from './terminal-utils.js';
+import type { WebglAddon } from '@xterm/addon-webgl';
 import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE } from '../drag-types.js';
 import { showTerminalContextMenu } from './terminal-context-menu.js';
 
@@ -19,6 +20,8 @@ interface TerminalInstance {
   terminal: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
+  /** The loaded WebGL renderer, if any (undefined = DOM renderer fallback). */
+  webgl?: WebglAddon;
   element: HTMLDivElement;
   sessionId: string;
   projectPath: string;
@@ -368,7 +371,7 @@ export function attachToContainer(sessionId: string, container: HTMLElement): vo
 
     attachCopyOnSelect(instance.terminal);
     collapseArmedTextareaOnContextMenu(instance.terminal);
-    loadWebglWithFallback(instance.terminal);
+    instance.webgl = loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
     const previousDoc = instance.element.ownerDocument;
     container.appendChild(instance.element);
@@ -376,6 +379,19 @@ export function attachToContainer(sessionId: string, container: HTMLElement): vo
     // rebinds to the new window when open() runs again after the move.
     if (container.ownerDocument !== previousDoc) instance.terminal.open(xtermWrap as HTMLElement);
   }
+}
+
+/**
+ * Swap the pane's WebGL renderer for a fresh one. Used when a pane comes back from
+ * the sessions window: a context left in a document that closed under it is lost
+ * without a `webglcontextlost` event, so the addon's own fallback never runs.
+ */
+export function reloadWebgl(sessionId: string): void {
+  const instance = instances.get(sessionId);
+  // Never opened: there is no renderer to swap (WebglAddon cannot load before open()).
+  if (!instance?.terminal.element) return;
+  try { instance.webgl?.dispose(); } catch { /* already disposed by onContextLoss */ }
+  instance.webgl = loadWebglWithFallback(instance.terminal);
 }
 
 export function showPane(sessionId: string, split: boolean): void {
@@ -459,13 +475,15 @@ export function setFocused(sessionId: string): void {
     activeEl === doc.body ||
     !!activeEl.closest('.terminal-pane');
 
+  // `.focused` is per window: focusing a pane in one window must not strip it from
+  // the pane the other window shows.
   for (const [id, instance] of instances) {
     if (id === sessionId) {
       instance.element.classList.add('focused');
       if (shouldFocusTerminal) {
         instance.terminal.focus();
       }
-    } else {
+    } else if ((instance.element.ownerDocument ?? document) === doc) {
       instance.element.classList.remove('focused');
     }
   }

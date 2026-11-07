@@ -181,4 +181,27 @@ describe('attachRemoteToContainer()', () => {
     expect(first.children).toEqual([]);
     expect(second.children).toEqual([element]);
   });
+
+  it('re-opens xterm when the pane moves into another document', async () => {
+    const { createRemoteTerminalPane, attachRemoteToContainer, getRemoteTerminalInstance, _resetForTesting } =
+      await import('./remote-terminal-pane.js');
+    const first = new FakeElement();
+    const second = new FakeElement();
+    const otherDoc = {};
+    Object.assign(first, { ownerDocument: document });
+    Object.assign(second, { ownerDocument: otherDoc });
+
+    _resetForTesting();
+    createRemoteTerminalPane('remote-doc', 'readonly', 80, 24, () => {});
+    attachRemoteToContainer('remote-doc', first as unknown as HTMLElement);
+    const instance = getRemoteTerminalInstance('remote-doc')!;
+    const element = instance.element as unknown as FakeElement;
+    markOpened(element);
+    Object.assign(element, { ownerDocument: document });
+    const open = vi.spyOn(instance.terminal, 'open');
+
+    attachRemoteToContainer('remote-doc', second as unknown as HTMLElement);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
 });
+

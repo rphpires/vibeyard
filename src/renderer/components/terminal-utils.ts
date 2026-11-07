@@ -120,10 +120,13 @@ export function attachClipboardCopyHandler(
 
 // Disposing the addon on context loss lets xterm.js fall back to the DOM renderer
 // instead of keeping a dead GPU texture atlas (black-box glyphs).
-export function loadWebglWithFallback(terminal: Terminal): void {
+export function loadWebglWithFallback(terminal: Terminal): WebglAddon | undefined {
   try {
     const addon = new WebglAddon();
     terminal.loadAddon(addon);
     addon.onContextLoss(() => addon.dispose());
-  } catch {}
+    return addon;
+  } catch {
+    return undefined;
+  }
 }

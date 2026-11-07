@@ -106,7 +106,11 @@ export function attachRemoteToContainer(sessionId: string, container: HTMLElemen
 
     loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
+    const previousDoc = instance.element.ownerDocument;
     container.appendChild(instance.element);
+    // Same rule as terminal-pane: xterm rebinds to another window's document only
+    // when open() runs again after the move (the sessions window).
+    if (container.ownerDocument !== previousDoc) instance.terminal.open(xtermWrap as HTMLElement);
   }
 }
 

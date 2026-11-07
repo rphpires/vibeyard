@@ -536,5 +536,8 @@
     "about": "关于",
     "general": "通用",
     "appearance": "外观"
+  },
+  "sessionWindow": {
+    "returnToMain": "返回主窗口"
   }
 }

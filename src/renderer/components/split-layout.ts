@@ -20,6 +20,7 @@ import {
   setPendingCliName,
   destroyTerminal,
   getTerminalInstance,
+  reloadWebgl,
 } from './terminal-pane.js';
 import {
   createInspectorPane,
@@ -151,6 +152,32 @@ export function destroyLayoutView(view: LayoutView): void {
   views.delete(view);
 }
 
+/**
+ * Move every pane laid out in `view` into `target`, hidden — the sessions window is
+ * closing (or swapping projects) and its panes must not stay in a document that goes
+ * away: a closed document silently loses the WebGL context and every DOM listener on
+ * the pane. Goes through the attach* helpers so xterm is re-opened in `target`'s
+ * document. Synchronous on purpose (callers run it from `pagehide`); never fits —
+ * the panes are hidden, and renderLayout() decides what the main window shows.
+ */
+export function evacuateLayoutView(view: LayoutView, target: HTMLElement): void {
+  hideViewPanes(view);
+  for (const project of appState.projects) {
+    for (const session of project.sessions) {
+      const el = paneElementFor(session);
+      if (!el || !view.container.contains(el)) continue;
+      // Attach only (no show*): the pane stays hidden as hideViewPanes left it.
+      (paneAttachFor[session.type ?? ''] ?? attachToContainer)(session.id, target);
+      if (isCliSession(session)) reloadWebgl(session.id);
+    }
+  }
+  removeSwarmWrapper(view);
+  removeEmptyState(view);
+  view.container.querySelectorAll('.swarm-empty-cell').forEach((el) => el.remove());
+  const state = viewStates.get(view);
+  if (state) state.lastFocusedPane = null;
+}
+
 /** The project a view shows right now. */
 function projectForView(view: LayoutView): ProjectRecord | undefined {
   const id = projectIdForView(view.kind, appState.activeProject?.id ?? null);
@@ -196,6 +223,17 @@ const paneInstanceFor: Record<string, (id: string) => { element: HTMLElement } |
   'project-tab': getProjectTabInstance,
   kanban: getKanbanInstance,
   team: getTeamInstance,
+};
+
+const paneAttachFor: Record<string, (id: string, container: HTMLElement) => void> = {
+  'file-reader': attachFileReaderToContainer,
+  'diff-viewer': attachFileViewerToContainer,
+  'mcp-inspector': attachInspectorToContainer,
+  'remote-terminal': attachRemoteToContainer,
+  'browser-tab': attachBrowserTabToContainer,
+  'project-tab': attachProjectTabToContainer,
+  kanban: attachKanbanToContainer,
+  team: attachTeamToContainer,
 };
 
 /** The pane element backing a session, whatever its type, once it has been created. */
@@ -638,7 +676,7 @@ function appendEmptyCells(view: LayoutView, count: number, target: HTMLElement):
     btn.className = 'swarm-empty-add-btn';
     btn.textContent = '+';
     btn.title = 'New session';
-    btn.addEventListener('click', () => quickNewSession());
+    btn.addEventListener('click', () => quickNewSession(projectForView(view)?.id));
 
     cell.appendChild(btn);
     target.appendChild(cell);
@@ -684,7 +722,8 @@ function showEmptyState(view: LayoutView, project: ProjectRecord | undefined): v
     const cta = doc.createElement('button');
     cta.className = 'btn-primary empty-state-cta';
     cta.innerHTML = `${plusIcon}<span>Start a session</span>`;
-    cta.addEventListener('click', () => quickNewSession());
+    // The view's project, not the active one: in the sessions window they differ.
+    cta.addEventListener('click', () => quickNewSession(project.id));
 
     el.append(title, hint, cta);
   }

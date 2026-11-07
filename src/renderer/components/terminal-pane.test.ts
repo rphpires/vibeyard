@@ -53,8 +53,11 @@ vi.mock('@xterm/addon-fit', () => ({
 
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class FakeWebglAddon {
+    static created: unknown[] = [];
+    disposed = false;
+    constructor() { FakeWebglAddon.created.push(this); }
     onContextLoss = (_: () => void) => ({ dispose() {} });
-    dispose() {}
+    dispose() { this.disposed = true; }
   },
 }));
 
@@ -615,6 +618,54 @@ describe('pane attach, focus and fit are idempotent', () => {
 
     setFocused('focus-x');
     expect(term.focusCount).toBe(1);
+  });
+
+  it('setFocused only moves .focused among the panes of the same document', async () => {
+    const { createTerminalPane, setFocused, getTerminalInstance } = await import('./terminal-pane.js');
+    const otherDoc = new FakeDocument();
+
+    createTerminalPane('fdoc-main-1', '/project', null, false, '', 'claude');
+    createTerminalPane('fdoc-main-2', '/project', null, false, '', 'claude');
+    createTerminalPane('fdoc-other', '/project', null, false, '', 'claude');
+    const main1 = getTerminalInstance('fdoc-main-1')!.element as unknown as FakeElement;
+    const main2 = getTerminalInstance('fdoc-main-2')!.element as unknown as FakeElement;
+    const other = getTerminalInstance('fdoc-other')!.element as unknown as FakeElement;
+    Object.assign(main1, { ownerDocument: doc });
+    Object.assign(main2, { ownerDocument: doc });
+    Object.assign(other, { ownerDocument: otherDoc });
+
+    setFocused('fdoc-main-1');
+    setFocused('fdoc-other');
+    // The sessions window's pane takes .focused without stripping the main window's.
+    expect(other.classList.contains('focused')).toBe(true);
+    expect(main1.classList.contains('focused')).toBe(true);
+
+    setFocused('fdoc-main-2');
+    expect(main2.classList.contains('focused')).toBe(true);
+    expect(main1.classList.contains('focused')).toBe(false);
+    expect(other.classList.contains('focused')).toBe(true);
+  });
+
+  it('reloadWebgl disposes the current WebGL addon and loads a fresh one', async () => {
+    const { createTerminalPane, attachToContainer, reloadWebgl, getTerminalInstance } = await import('./terminal-pane.js');
+    const { WebglAddon } = await import('@xterm/addon-webgl');
+    const Fake = WebglAddon as unknown as { created: unknown[] };
+    const container = new FakeElement('div');
+
+    createTerminalPane('webgl-1', '/project', null, false, '', 'claude');
+    attachToContainer('webgl-1', container as unknown as HTMLElement);
+    const before = Fake.created.length;
+    const first = Fake.created[before - 1] as { disposed: boolean };
+    // FakeTerminal.open() does not set it; real xterm does.
+    Object.assign(getTerminalInstance('webgl-1')!.terminal, { element: {} });
+
+    reloadWebgl('webgl-1');
+    expect(first.disposed).toBe(true);
+    expect(Fake.created.length).toBe(before + 1);
+
+    // Unknown session: no-op.
+    reloadWebgl('nope');
+    expect(Fake.created.length).toBe(before + 1);
   });
 
 });

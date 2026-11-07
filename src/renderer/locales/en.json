@@ -536,5 +536,8 @@
     "about": "About",
     "general": "General",
     "appearance": "Appearance"
+  },
+  "sessionWindow": {
+    "returnToMain": "Return to main window"
   }
 }

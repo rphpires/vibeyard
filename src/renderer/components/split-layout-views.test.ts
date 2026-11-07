@@ -52,6 +52,7 @@ const terminal = {
   setPendingCliName: vi.fn(),
   destroyTerminal: vi.fn(),
   getTerminalInstance: vi.fn((id: string) => panes.get(id)),
+  reloadWebgl: vi.fn(),
 };
 vi.mock('./terminal-pane.js', () => terminal);
 
@@ -110,7 +111,8 @@ document.body.appendChild(mainContainer);
 const sessionsContainer = document.createElement('div');
 document.body.appendChild(sessionsContainer);
 
-const { initSplitLayout, createLayoutView, destroyLayoutView, renderLayout } = await import('./split-layout.js');
+const { initSplitLayout, createLayoutView, destroyLayoutView, renderLayout, evacuateLayoutView } = await import('./split-layout.js');
+const { quickNewSession } = await import('./tab-bar.js');
 const windowState = await import('../session-window-state.js');
 initSplitLayout();
 
@@ -210,6 +212,93 @@ describe('layout views', () => {
       expect(terminal.fitAllVisible).toHaveBeenCalledWith(otherDoc);
       expect(terminal.fitAllVisible).not.toHaveBeenCalledWith(document);
       expect(terminal.hideAllPanes).not.toHaveBeenCalledWith(mainContainer);
+    } finally {
+      destroyLayoutView(view);
+    }
+  });
+
+  it('an empty detached project shows the empty state whose button starts a session in that project', () => {
+    const a = project('A', [{ id: 'a4', cliSessionId: null }], 'a4');
+    const b = project('B', [], null);
+    fakeState.projects = [a, b];
+    fakeState.activeProject = a;
+    windowState.setDetachedProjectId('B');
+    const otherDoc = document.implementation.createHTMLDocument('sessions');
+    const container = otherDoc.createElement('div');
+    otherDoc.body.appendChild(container);
+    const view = createLayoutView('sessions', container);
+
+    try {
+      renderLayout();
+      const cta = container.querySelector<HTMLButtonElement>('.empty-state-cta');
+      expect(cta).not.toBeNull();
+      expect(cta!.ownerDocument).toBe(otherDoc);
+      cta!.click();
+      expect(quickNewSession).toHaveBeenCalledWith('B');
+    } finally {
+      destroyLayoutView(view);
+    }
+  });
+
+  it('the swarm "+" cell of the sessions view starts a session in the detached project', () => {
+    const a = project('A', [{ id: 'a5', cliSessionId: null }], 'a5');
+    const b = project('B', [{ id: 'b5', cliSessionId: null }, { id: 'b6', cliSessionId: null }], 'b5');
+    b.layout = { mode: 'swarm', splitPanes: ['b5', 'b6'], splitDirection: 'horizontal' };
+    fakeState.projects = [a, b];
+    fakeState.activeProject = a;
+    windowState.setDetachedProjectId('B');
+    const otherDoc = document.implementation.createHTMLDocument('sessions');
+    const container = otherDoc.createElement('div');
+    otherDoc.body.appendChild(container);
+    const view = createLayoutView('sessions', container);
+
+    try {
+      renderLayout();
+      // 2 panes → 2x1 grid: no filler. Add a third pane for a 2x2 grid with one "+".
+      b.sessions.push({ id: 'b7', cliSessionId: null });
+      b.layout.splitPanes.push('b7');
+      renderLayout();
+      const add = container.querySelector<HTMLButtonElement>('.swarm-empty-add-btn');
+      expect(add).not.toBeNull();
+      add!.click();
+      expect(quickNewSession).toHaveBeenCalledWith('B');
+    } finally {
+      destroyLayoutView(view);
+    }
+  });
+
+  it('evacuateLayoutView moves every pane of the view into the target, hidden, re-homing xterm', () => {
+    const a = project('A', [{ id: 'a8', cliSessionId: null }], 'a8');
+    const b = project('B', [{ id: 'b8', cliSessionId: null }, { id: 'b9', cliSessionId: null }], 'b8');
+    b.layout = { mode: 'split', splitPanes: ['b8', 'b9'], splitDirection: 'horizontal' };
+    fakeState.projects = [a, b];
+    fakeState.activeProject = a;
+    windowState.setDetachedProjectId('B');
+    const otherDoc = document.implementation.createHTMLDocument('sessions');
+    const container = otherDoc.createElement('div');
+    otherDoc.body.appendChild(container);
+    const view = createLayoutView('sessions', container);
+
+    try {
+      renderLayout();
+      expect(panes.get('b8')!.element.parentElement).toBe(container);
+      expect(panes.get('b9')!.element.parentElement).toBe(container);
+      terminal.attachToContainer.mockClear();
+
+      evacuateLayoutView(view, mainContainer);
+
+      for (const id of ['b8', 'b9']) {
+        const el = panes.get(id)!.element;
+        expect(el.parentElement).toBe(mainContainer);
+        expect(el.classList.contains('hidden')).toBe(true);
+        // Through attachToContainer, which re-runs terminal.open() for the new document.
+        expect(terminal.attachToContainer).toHaveBeenCalledWith(id, mainContainer);
+        expect(terminal.reloadWebgl).toHaveBeenCalledWith(id);
+      }
+      // The main view's own pane is untouched.
+      expect(terminal.attachToContainer).not.toHaveBeenCalledWith('a8', expect.anything());
+      expect(container.querySelector('.terminal-pane')).toBeNull();
+      expect(terminal.destroyTerminal).not.toHaveBeenCalled();
     } finally {
       destroyLayoutView(view);
     }
