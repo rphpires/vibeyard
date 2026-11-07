@@ -17,12 +17,14 @@ import { DomSearchBackend } from './components/dom-search-backend.js';
 import { toggleInspector } from './components/session-inspector.js';
 import { zoomIn, zoomOut, zoomReset } from './zoom.js';
 import { getBrowserTabInstance } from './components/browser-tab/instance.js';
-import { getDetachedProjectId, runWithCommandSource } from './session-window-state.js';
+import { getDetachedProjectId, runWithCommandSource, viewShowsSession } from './session-window-state.js';
+import { isCliSession } from './session-utils.js';
 import {
   commandTargetDoc,
   commandTargetProjectId,
   commandTargetSession,
   commandTargetView,
+  revealNavTarget,
   runInMainWindow,
   type CommandSource,
 } from './reveal.js';
@@ -89,8 +91,8 @@ export function initKeybindings(): void {
   }
   shortcutManager.registerHandler('next-session', () => cycle(1));
   shortcutManager.registerHandler('prev-session', () => cycle(-1));
-  shortcutManager.registerHandler('tab-back', () => appState.navigateBack());
-  shortcutManager.registerHandler('tab-forward', () => appState.navigateForward());
+  shortcutManager.registerHandler('tab-back', () => revealNavTarget(appState.navigateBack()));
+  shortcutManager.registerHandler('tab-forward', () => revealNavTarget(appState.navigateForward()));
   shortcutManager.registerHandler('toggle-sidebar', () => inMain(toggleSidebar)());
   shortcutManager.registerHandler('toggle-split', () => toggleSwarm());
   shortcutManager.registerHandler('project-terminal', () => inMain(toggleProjectTerminal)());
@@ -100,8 +102,10 @@ export function initKeybindings(): void {
   shortcutManager.registerHandler('quick-open', () => inMain(showQuickOpen)());
   shortcutManager.registerHandler('session-search', () => inMain(showSessionSearchPalette)());
   shortcutManager.registerHandler('find-in-terminal', () => {
+    // The project shell lives in the main window. Its document keeps an activeElement
+    // after the sessions window takes focus, so only a key pressed in main counts.
     const shellPanel = document.getElementById('project-terminal-panel');
-    if (shellPanel && !shellPanel.classList.contains('hidden') &&
+    if (commandTargetView() === 'main' && shellPanel && !shellPanel.classList.contains('hidden') &&
         shellPanel.contains(document.activeElement)) {
       const shellSessionId = getActiveShellSessionId();
       if (shellSessionId) {
@@ -126,7 +130,14 @@ export function initKeybindings(): void {
       if (!body) return;
       showSearchBar(session.id, new DomSearchBackend(body, '.diff-line'));
     } else {
-      const sessionId = getFocusedSessionId();
+      // The focused pane (split/swarm) when it belongs to the target view; it is global
+      // across windows, so otherwise the target view's own active CLI tab.
+      const focused = getFocusedSessionId();
+      const project = appState.projects.find((p) => p.id === commandTargetProjectId());
+      const focusedTab = focused ? project?.sessions.find((s) => s.id === focused) : undefined;
+      const sessionId = focusedTab && viewShowsSession(commandTargetView(), project!.id, focusedTab)
+        ? focusedTab.id
+        : isCliSession(session) ? session.id : focused;
       if (sessionId) showSearchBar(sessionId, TerminalSearchBackend(sessionId));
     }
   });

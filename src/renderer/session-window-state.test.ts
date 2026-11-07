@@ -11,6 +11,7 @@ import {
   setMainViewSelection,
   viewActiveSessionId,
   viewKindFor,
+  onScreenTabIds,
   _resetForTesting,
 } from './session-window-state.js';
 
@@ -131,5 +132,17 @@ describe('session-window-state', () => {
     expect(viewKindFor('p', sess('a'))).toBe('sessions');
     expect(viewKindFor('p', sess('k', 'kanban'))).toBe('main');
     expect(viewKindFor('q', sess('a'))).toBe('main');
+  });
+
+  it('onScreenTabIds: the main view active tab of the active project, plus the sessions view', () => {
+    const a = { id: 'a', activeSessionId: 'a1', sessions: [sess('a1'), sess('a2')] } as unknown as ProjectRecord;
+    const p = { id: 'p', activeSessionId: 'p2', sessions: [sess('pk', 'kanban'), sess('p1'), sess('p2')] } as unknown as ProjectRecord;
+    expect(onScreenTabIds([a, p], 'a')).toEqual(['a1']);
+    setDetachedProjectId('p');
+    expect(onScreenTabIds([a, p], 'a')).toEqual(['a1', 'p2']);
+    // The detached project active in main: main shows its own selection (none yet).
+    expect(onScreenTabIds([a, p], 'p')).toEqual(['p2']);
+    setMainViewSelection('pk');
+    expect(onScreenTabIds([a, p], 'p')).toEqual(['pk', 'p2']);
   });
 });

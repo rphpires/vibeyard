@@ -19,8 +19,8 @@ const h = vi.hoisted(() => {
     cycleSession: vi.fn(),
     gotoSession: vi.fn(),
     toggleSwarm: vi.fn(),
-    navigateBack: vi.fn(),
-    navigateForward: vi.fn(),
+    navigateBack: vi.fn((): { projectId: string; sessionId: string } | undefined => undefined),
+    navigateForward: vi.fn((): { projectId: string; sessionId: string } | undefined => undefined),
     setActiveProject: vi.fn(),
     setActiveSession: vi.fn(),
   };
@@ -39,6 +39,9 @@ const h = vi.hoisted(() => {
     toggleSidebar: vi.fn(),
     toggleInspector: vi.fn(),
     reload: vi.fn(),
+    showSearchBar: vi.fn(),
+    getActiveShellSessionId: vi.fn((): string | null => null),
+    getFocusedSessionId: vi.fn((): string | null => null),
   };
 });
 
@@ -47,11 +50,11 @@ vi.mock('./session-window.js', () => h.sw);
 vi.mock('./session-close.js', () => ({ closeTab: h.closeTab }));
 vi.mock('./components/sidebar.js', () => ({ promptNewProject: vi.fn(), toggleSidebar: h.toggleSidebar, toggleGitPanel: vi.fn() }));
 vi.mock('./components/tab-bar.js', () => ({ quickNewSession: h.quickNewSession }));
-vi.mock('./components/project-terminal.js', () => ({ toggleProjectTerminal: vi.fn(), getActiveShellSessionId: vi.fn() }));
+vi.mock('./components/project-terminal.js', () => ({ toggleProjectTerminal: vi.fn(), getActiveShellSessionId: h.getActiveShellSessionId }));
 vi.mock('./components/debug-panel.js', () => ({ toggleDebugPanel: vi.fn() }));
 vi.mock('./components/preferences-modal.js', () => ({ showPreferencesModal: vi.fn() }));
-vi.mock('./components/terminal-pane.js', () => ({ getFocusedSessionId: vi.fn() }));
-vi.mock('./components/search-bar.js', () => ({ showSearchBar: vi.fn(), TerminalSearchBackend: vi.fn(), ShellTerminalSearchBackend: vi.fn() }));
+vi.mock('./components/terminal-pane.js', () => ({ getFocusedSessionId: h.getFocusedSessionId }));
+vi.mock('./components/search-bar.js', () => ({ showSearchBar: h.showSearchBar, TerminalSearchBackend: vi.fn(), ShellTerminalSearchBackend: vi.fn() }));
 vi.mock('./components/quick-open.js', () => ({ showQuickOpen: vi.fn() }));
 vi.mock('./components/session-search-palette.js', () => ({ showSessionSearchPalette: vi.fn() }));
 vi.mock('./shortcuts.js', () => ({
@@ -165,6 +168,59 @@ describe('keyboard shortcuts', () => {
     h.sw.isSessionWindowFocused.mockReturnValue(false);
     h.handlers['toggle-inspector']();
     expect(h.toggleInspector).toHaveBeenCalledWith('a1');
+  });
+});
+
+describe('Back/Forward', () => {
+  it('a step onto a sessions-window tab brings that window forward', () => {
+    h.fakeState.navigateBack.mockReturnValueOnce({ projectId: 'B', sessionId: 'b1' });
+    h.handlers['tab-back']();
+    expect(h.sw.focusSessionWindow).toHaveBeenCalled();
+  });
+
+  it('a step onto a main-window tab does not', () => {
+    h.fakeState.navigateForward.mockReturnValueOnce({ projectId: 'A', sessionId: 'a1' });
+    h.handlers['tab-forward']();
+    expect(h.sw.focusSessionWindow).not.toHaveBeenCalled();
+  });
+});
+
+describe('find in terminal', () => {
+  function focusedShellPanel(): () => void {
+    const panel = document.createElement('div');
+    panel.id = 'project-terminal-panel';
+    const input = document.createElement('textarea');
+    panel.appendChild(input);
+    document.body.appendChild(panel);
+    input.focus();
+    h.getActiveShellSessionId.mockReturnValue('shell1');
+    return () => { panel.remove(); h.getActiveShellSessionId.mockReturnValue(null); };
+  }
+
+  it('from the sessions window, never the main window project shell (its focus is stale there)', () => {
+    const cleanup = focusedShellPanel();
+    try {
+      h.sw.isSessionWindowFocused.mockReturnValue(true);
+      h.handlers['find-in-terminal']();
+      expect(h.showSearchBar).toHaveBeenCalledTimes(1);
+      expect(h.showSearchBar.mock.calls[0][0]).toBe('b1');
+    } finally { cleanup(); }
+  });
+
+  it('from the main window, the focused project shell still wins', () => {
+    const cleanup = focusedShellPanel();
+    try {
+      h.handlers['find-in-terminal']();
+      expect(h.showSearchBar.mock.calls[0][0]).toBe('shell1');
+    } finally { cleanup(); }
+  });
+
+  it('prefers the target view CLI tab over the global focused pane', () => {
+    h.getFocusedSessionId.mockReturnValue('a1'); // stale: focus was last set in the main window
+    h.sw.isSessionWindowFocused.mockReturnValue(true);
+    h.handlers['find-in-terminal']();
+    expect(h.showSearchBar.mock.calls[0][0]).toBe('b1');
+    h.getFocusedSessionId.mockReturnValue(null);
   });
 });
 

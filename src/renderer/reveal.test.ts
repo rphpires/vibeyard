@@ -33,6 +33,7 @@ vi.mock('./components/terminal-pane.js', () => ({ getTerminalInstance: vi.fn(() 
 
 (window as unknown as { vibeyard: unknown }).vibeyard = {
   store: { load: vi.fn(), save: vi.fn() },
+  session: { transcriptExists: vi.fn(() => Promise.resolve(true)) },
   ctl: {
     onCommand: vi.fn((cb) => { ctlListeners.command = cb; return () => {}; }),
     reply: vi.fn(),
@@ -182,6 +183,38 @@ describe('revealSession / revealProject', () => {
     appState.setActiveProject(b.id);
     reveal.revealProject(a.id);
     expect(appState.activeProjectId).toBe(a.id);
+    expect(sw.focusSessionWindow).not.toHaveBeenCalled();
+  });
+});
+
+describe('resumeAndReveal', () => {
+  function archive(projectId: string) {
+    const project = appState.projects.find((p) => p.id === projectId)!;
+    project.sessionHistory = [{
+      id: 'h1', cliSessionId: 'cli-old', name: 'old', providerId: 'claude',
+      createdAt: '2026-01-01T00:00:00Z', closedAt: '2026-01-01T01:00:00Z', cost: null,
+    } as never];
+    return project;
+  }
+
+  it('resuming into the detached project lands in the sessions window; main stays on A', async () => {
+    const { a, b } = setup();
+    archive(b.id);
+    await reveal.resumeAndReveal(b.id, 'h1');
+    const resumed = b.sessions.find((s) => s.cliSessionId === 'cli-old');
+    expect(resumed).toBeDefined();
+    expect(b.activeSessionId).toBe(resumed!.id);
+    expect(appState.activeProjectId).toBe(a.id);
+    expect(sw.focusSessionWindow).toHaveBeenCalled();
+  });
+
+  it('resuming into another project switches the main window to it', async () => {
+    const { a } = setup();
+    const c = appState.addProject('C', '/c');
+    appState.setActiveProject(a.id);
+    archive(c.id);
+    await reveal.resumeAndReveal(c.id, 'h1');
+    expect(appState.activeProjectId).toBe(c.id);
     expect(sw.focusSessionWindow).not.toHaveBeenCalled();
   });
 });

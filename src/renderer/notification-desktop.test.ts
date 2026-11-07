@@ -42,6 +42,8 @@ vi.mock('./state.js', () => ({
 
 import { _resetForTesting as resetActivity, setHookStatus, initSession } from './session-activity.js';
 import { _resetForTesting as resetDesktopNotif, initNotificationDesktop } from './notification-desktop.js';
+import { isSessionWindowFocused } from './session-window.js';
+import * as windowState from './session-window-state.js';
 
 
 // Track Notification constructor calls
@@ -281,5 +283,42 @@ describe('notification-desktop', () => {
     expect(notificationInstances).toHaveLength(1);
     expect(notificationInstances[0].title).toBe('Vibeyard');
     expect(notificationInstances[0].options.body).toBe('Session is waiting for input');
+  });
+
+  describe('with a project in the sessions window', () => {
+    // proj-2 is detached; its active tab 'b-active' is on screen in the sessions window.
+    beforeEach(() => {
+      windowState._resetForTesting();
+      (mockAppState.projects as Array<Record<string, unknown>>).push({
+        id: 'proj-2', name: 'Proj Two', activeSessionId: 'b-active',
+        sessions: [{ id: 'b-active', name: 'B Active' }, { id: 'b-bg', name: 'B Background' }],
+      });
+      windowState.setDetachedProjectId('proj-2');
+    });
+    afterEach(() => {
+      mockAppState.projects.splice(1);
+      windowState._resetForTesting();
+      vi.mocked(isSessionWindowFocused).mockReturnValue(false);
+    });
+
+    it('does not notify for the sessions window active tab while that window has focus', () => {
+      vi.mocked(isSessionWindowFocused).mockReturnValue(true);
+      initSession('b-active');
+      setHookStatus('b-active', 'working');
+      setHookStatus('b-active', 'completed');
+      expect(notificationInstances).toHaveLength(0);
+    });
+
+    it('notifies for it when the sessions window is not focused, and for its other tabs', () => {
+      initSession('b-active');
+      setHookStatus('b-active', 'working');
+      setHookStatus('b-active', 'completed');
+      expect(notificationInstances).toHaveLength(1);
+      vi.mocked(isSessionWindowFocused).mockReturnValue(true);
+      initSession('b-bg');
+      setHookStatus('b-bg', 'working');
+      setHookStatus('b-bg', 'completed');
+      expect(notificationInstances).toHaveLength(2);
+    });
   });
 });

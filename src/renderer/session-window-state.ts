@@ -84,6 +84,22 @@ export function viewActiveSessionId(kind: ViewKind, project: ProjectRecord): str
   return kind === 'main' ? null : tabs[0]?.id ?? null;
 }
 
+/**
+ * The tabs on screen as a view's active tab: the main view's for the active project,
+ * then the sessions view's for the detached project. What unread marks and
+ * notifications treat as "the user is looking at it".
+ */
+export function onScreenTabIds(projects: readonly ProjectRecord[], activeProjectId: string | null): string[] {
+  const ids: string[] = [];
+  for (const kind of ['main', 'sessions'] as const) {
+    const projectId = projectIdForView(kind, activeProjectId);
+    const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
+    const id = project ? viewActiveSessionId(kind, project) : null;
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
 let commandSource: ViewKind | null = null;
 
 /**

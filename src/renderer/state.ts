@@ -34,9 +34,16 @@ import {
   setMainViewSelection,
   viewActiveSessionId,
   viewKindFor,
+  viewShowsSession,
   viewTabs,
   type ViewKind,
 } from './session-window-state.js';
+
+/** Where a Back/Forward step landed. */
+export interface NavTarget {
+  projectId: string;
+  sessionId: string;
+}
 import { defaultSessionName } from './state/session-naming.js';
 import { createDefaultBoard, ensureProjectDefaults, hydrateLoadedState, serializeForSave } from './state/persistence.js';
 import {
@@ -164,26 +171,30 @@ class AppState {
     return this.findSessionWithProject(sessionId)?.project;
   }
 
-  navigateBack(): void {
-    this.stepNav(-1);
+  /** Step back in tab history. Returns where it went (the caller reveals a sessions-window tab). */
+  navigateBack(): NavTarget | undefined {
+    return this.stepNav(-1);
   }
 
-  navigateForward(): void {
-    this.stepNav(1);
+  navigateForward(): NavTarget | undefined {
+    return this.stepNav(1);
   }
 
-  private stepNav(direction: 1 | -1): void {
+  private stepNav(direction: 1 | -1): NavTarget | undefined {
     const id = this.nav.findNextValid(direction, (sid) => !!this.findProjectBySession(sid));
-    if (!id) return;
-    const project = this.findProjectBySession(id)!;
+    if (!id) return undefined;
+    const { project, session } = this.findSessionWithProject(id)!;
+    // A tab of the sessions window is shown there: the main window keeps its project.
+    const inSessionsWindow = viewShowsSession('sessions', project.id, session);
     this.nav.withSuppression(() => {
-      const projectChanged = this.state.activeProjectId !== project.id;
-      this.state.activeProjectId = project.id;
+      const projectChanged = !inSessionsWindow && this.state.activeProjectId !== project.id;
+      if (projectChanged) this.state.activeProjectId = project.id;
       this.selectTab(project, id);
       this.persist();
       if (projectChanged) this.emit('project-changed');
       this.emit('session-changed');
     });
+    return { projectId: project.id, sessionId: id };
   }
 
   on(event: EventType, cb: EventCallback): () => void {

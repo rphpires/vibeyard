@@ -1,6 +1,16 @@
 import { appState } from './state.js';
 import { onChange, type SessionStatus } from './session-activity.js';
 import { revealSession } from './reveal.js';
+import { isSessionWindowFocused } from './session-window.js';
+import { getDetachedProjectId, viewActiveSessionId } from './session-window-state.js';
+
+/** The session is the active tab of a window that has focus. */
+function isSeen(sessionId: string): boolean {
+  const active = appState.activeProject;
+  if (document.hasFocus() && active && viewActiveSessionId('main', active) === sessionId) return true;
+  const detached = appState.projects.find((p) => p.id === getDetachedProjectId());
+  return !!detached && isSessionWindowFocused() && viewActiveSessionId('sessions', detached) === sessionId;
+}
 
 const previousStatus = new Map<string, SessionStatus>();
 
@@ -69,7 +79,7 @@ export function initNotificationDesktop(): void {
     if (!appState.preferences.notificationsDesktop) return;
     if (prev !== 'working') return;
     if (status !== 'waiting' && status !== 'completed' && status !== 'input') return;
-    if (document.hasFocus() && sessionId === appState.activeProject?.activeSessionId) return;
+    if (isSeen(sessionId)) return;
 
     showNotification(sessionId, status);
   });

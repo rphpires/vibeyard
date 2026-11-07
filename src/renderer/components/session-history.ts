@@ -3,14 +3,7 @@ import { loadProviderAvailability } from '../provider-availability.js';
 import { buildResumeWithProviderItems } from './resume-with-provider-menu.js';
 import { showConfirmDialog } from './modal.js';
 import type { ProviderId } from '../../shared/types.js';
-import { revealSession } from '../reveal.js';
-
-/** Resume from history and show the tab where it lands (the sessions window for a detached project). */
-function resumeAndReveal(projectId: string, archivedId: string): void {
-  void appState.resumeFromHistorySafe(projectId, archivedId).then((session) => {
-    if (session) revealSession(projectId, session.id);
-  });
-}
+import { resumeAndReveal } from '../reveal.js';
 
 const MAX_VISIBLE = 50;
 const PROVIDER_LABELS: Record<string, string> = {
@@ -53,7 +46,7 @@ function showHistoryContextMenu(x: number, y: number, project: ProjectRecord, ar
     resumeItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideHistoryContextMenu();
-      resumeAndReveal(project.id, archived.id);
+      void resumeAndReveal(project.id, archived.id);
     });
     menu.appendChild(resumeItem);
   }
@@ -242,7 +235,7 @@ function renderList(
     if (archived.cliSessionId) {
       item.style.cursor = 'pointer';
       item.addEventListener('click', () => {
-        resumeAndReveal(project.id, archived.id);
+        void resumeAndReveal(project.id, archived.id);
       });
     }
     item.addEventListener('contextmenu', (e) => {

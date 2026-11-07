@@ -84,6 +84,22 @@ export function revealSession(projectId: string, sessionId: string): void {
   appState.setActiveSession(projectId, sessionId);
 }
 
+/**
+ * After a Back/Forward step (which already selected the tab, without touching nav
+ * history): a tab of the sessions window brings that window forward.
+ */
+export function revealNavTarget(target: { projectId: string; sessionId: string } | undefined): void {
+  if (!target) return;
+  const session = appState.projects.find((p) => p.id === target.projectId)?.sessions.find((s) => s.id === target.sessionId);
+  if (session && viewShowsSession('sessions', target.projectId, session)) focusSessionWindow();
+}
+
+/** Resume a history entry and show the tab where it lands (revealSession). */
+export async function resumeAndReveal(projectId: string, archivedId: string): Promise<void> {
+  const session = await appState.resumeFromHistorySafe(projectId, archivedId);
+  if (session) revealSession(projectId, session.id);
+}
+
 /** Make a project active in the main window; a detached one also brings its sessions window forward. */
 export function revealProject(projectId: string): void {
   appState.setActiveProject(projectId);

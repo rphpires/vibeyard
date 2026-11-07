@@ -125,4 +125,38 @@ describe('a detached project (sessions window)', () => {
     expect(b.layout.splitPanes).toEqual([b1.id, b2.id]);
     expect(a.layout.mode).toBe('tabs');
   });
+
+  it('Back/Forward onto a sessions-window tab keeps the main project and returns where it went', () => {
+    const { a, b, b1, b2 } = setup();
+    const a1 = appState.addSession(a.id, 'a1')!;
+    appState.setActiveSession(b.id, b1.id);
+    appState.setActiveSession(b.id, b2.id);
+    appState.setActiveSession(a.id, a1.id);
+    expect(appState.activeProjectId).toBe(a.id);
+
+    const back = appState.navigateBack();
+    expect(back).toEqual({ projectId: b.id, sessionId: b2.id });
+    expect(b.activeSessionId).toBe(b2.id);
+    expect(appState.activeProjectId).toBe(a.id); // the main window stays on A
+
+    appState.navigateBack();
+    expect(b.activeSessionId).toBe(b1.id);
+    expect(appState.activeProjectId).toBe(a.id);
+
+    // Forward twice lands back on A's tab, in the main window.
+    appState.navigateForward();
+    expect(appState.navigateForward()).toEqual({ projectId: a.id, sessionId: a1.id });
+    expect(appState.activeProjectId).toBe(a.id);
+  });
+
+  it('Back onto a session of a project shown only in main still switches the main project', () => {
+    const { a, b, b1 } = setup();
+    ws.setDetachedProjectId(null);
+    const a1 = appState.addSession(a.id, 'a1')!;
+    appState.setActiveSession(b.id, b1.id);
+    appState.setActiveProject(a.id);
+    appState.setActiveSession(a.id, a1.id);
+    appState.navigateBack();
+    expect(appState.activeProjectId).toBe(b.id);
+  });
 });
