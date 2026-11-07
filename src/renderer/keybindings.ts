@@ -130,13 +130,14 @@ export function initKeybindings(): void {
       showSearchBar(session.id, new DomSearchBackend(body, '.diff-line'));
     } else {
       // The focused pane (split/swarm) when it belongs to the target view; it is global
-      // across windows, so otherwise the target view's own active CLI tab.
+      // across windows, so otherwise the target view's own active CLI tab (and nothing
+      // when that tab is not a terminal: a focused pane outside the view is the other window's).
       const focused = getFocusedSessionId();
       const project = appState.projects.find((p) => p.id === commandTargetProjectId());
       const focusedTab = focused ? project?.sessions.find((s) => s.id === focused) : undefined;
       const sessionId = focusedTab && viewShowsSession(commandTargetView(), project!.id, focusedTab)
         ? focusedTab.id
-        : isCliSession(session) ? session.id : focused;
+        : isCliSession(session) ? session.id : undefined;
       if (sessionId) showSearchBar(sessionId, TerminalSearchBackend(sessionId));
     }
   });

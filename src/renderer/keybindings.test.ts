@@ -224,6 +224,16 @@ describe('find in terminal', () => {
     expect(h.showSearchBar.mock.calls[0][0]).toBe('b1');
     h.getFocusedSessionId.mockReturnValue(null);
   });
+
+  it('never falls back to a focused pane of the other window', () => {
+    // The sessions view shows B's browser tab; the focused pane is main's a1.
+    h.fakeState.projects[1].activeSessionId = 'web';
+    h.getFocusedSessionId.mockReturnValue('a1');
+    h.sw.isSessionWindowFocused.mockReturnValue(true);
+    h.handlers['find-in-terminal']();
+    expect(h.showSearchBar).not.toHaveBeenCalled();
+    h.getFocusedSessionId.mockReturnValue(null);
+  });
 });
 
 describe('a key press knows its window', () => {
