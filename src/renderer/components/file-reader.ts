@@ -136,8 +136,9 @@ function renderImageContent(dataUrl: string, filePath: string): HTMLElement {
 
 function renderBody(instance: FileReaderInstance): void {
   const body = instance.element.querySelector('.file-reader-body')!;
-  // Preserve text selection if user is selecting
-  const sel = window.getSelection();
+  // Preserve text selection if user is selecting — in the pane's own document (the
+  // sessions window's, when it sits there).
+  const sel = instance.element.ownerDocument.getSelection();
   if (sel && sel.rangeCount > 0 && !sel.isCollapsed && body.contains(sel.anchorNode)) {
     return;
   }

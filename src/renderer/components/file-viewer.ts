@@ -17,12 +17,14 @@ interface FileViewerInstance {
 const instances = new Map<string, FileViewerInstance>();
 let unwatchFileChanged: (() => void) | null = null;
 const pendingReloads = new Set<string>();
-let removeSelectionListener: (() => void) | null = null;
+/** selectionchange listeners while a reload waits, one per document a waiting pane is in. */
+const selectionListeners = new Map<Document, () => void>();
 
 function isSelectionInsideFileViewer(sessionId: string): boolean {
   const instance = instances.get(sessionId);
   if (!instance) return false;
-  const sel = window.getSelection();
+  // The pane's own document: a diff in the sessions window is selected there.
+  const sel = instance.element.ownerDocument.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
   const body = instance.element.querySelector('.file-viewer-body');
   if (!body) return false;
@@ -30,34 +32,30 @@ function isSelectionInsideFileViewer(sessionId: string): boolean {
   return body.contains(range.startContainer);
 }
 
+function removeSelectionListeners(): void {
+  for (const remove of selectionListeners.values()) remove();
+  selectionListeners.clear();
+}
+
+/** Reload every waiting pane whose selection is gone; stop listening once none waits. */
 function flushPendingReloads(): void {
-  const ids = [...pendingReloads];
-  pendingReloads.clear();
-  for (const id of ids) {
+  for (const id of [...pendingReloads]) {
+    if (isSelectionInsideFileViewer(id)) continue;
+    pendingReloads.delete(id);
     const inst = instances.get(id);
     if (inst) {
       inst.loaded = false;
       loadDiff(inst, id);
     }
   }
-  // Remove listener when no longer needed
-  if (removeSelectionListener) {
-    removeSelectionListener();
-    removeSelectionListener = null;
-  }
+  if (pendingReloads.size === 0) removeSelectionListeners();
 }
 
-function onSelectionChange(): void {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-    if (pendingReloads.size > 0) flushPendingReloads();
-  }
-}
-
-function ensureSelectionListener(): void {
-  if (removeSelectionListener) return;
-  document.addEventListener('selectionchange', onSelectionChange);
-  removeSelectionListener = () => document.removeEventListener('selectionchange', onSelectionChange);
+function ensureSelectionListener(doc: Document): void {
+  if (selectionListeners.has(doc)) return;
+  const onSelectionChange = (): void => flushPendingReloads();
+  doc.addEventListener('selectionchange', onSelectionChange);
+  selectionListeners.set(doc, () => doc.removeEventListener('selectionchange', onSelectionChange));
 }
 
 function escapeHtml(s: string): string {
@@ -198,10 +196,7 @@ export function destroyFileViewerPane(sessionId: string): void {
     window.vibeyard.fs.unwatchDir(dirname(instance.resolvedPath));
   }
   pendingReloads.delete(sessionId);
-  if (pendingReloads.size === 0 && removeSelectionListener) {
-    removeSelectionListener();
-    removeSelectionListener = null;
-  }
+  if (pendingReloads.size === 0) removeSelectionListeners();
   destroySearchBar(sessionId);
   instance.element.remove();
   instances.delete(sessionId);
@@ -259,7 +254,7 @@ export function reloadFileViewer(sessionId: string): void {
   if (!instance) return;
   if (isSelectionInsideFileViewer(sessionId)) {
     pendingReloads.add(sessionId);
-    ensureSelectionListener();
+    ensureSelectionListener(instance.element.ownerDocument);
     return;
   }
   instance.loaded = false;

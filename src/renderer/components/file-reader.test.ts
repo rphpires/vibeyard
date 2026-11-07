@@ -142,6 +142,27 @@ describe('a file reader of the project detached into the sessions window (main s
     await vi.waitFor(() => expect(addFileReaderSession).toHaveBeenCalledWith('B', '/b/README.md', undefined));
   });
 
+  it('a selection in its body, in the sessions window document, survives a re-render', async () => {
+    readFile.mockResolvedValue({ ok: true, content: '# Title\n\nsome text' });
+    createFileReaderPane('b-md', '/b/docs/a.md');
+    showFileReaderPane('b-md', false);
+    const el = getFileReaderInstance('b-md')!.element;
+    await vi.waitFor(() => expect(el.querySelector('.file-reader-markdown')).not.toBeNull());
+    const iframe = document.createElement('iframe');
+    document.body.appendChild(iframe);
+    const childDoc = iframe.contentDocument!;
+    childDoc.body.appendChild(el);
+    const range = childDoc.createRange();
+    range.selectNodeContents(el.querySelector('.file-reader-markdown p')!);
+    childDoc.getSelection()!.addRange(range);
+
+    [...el.querySelectorAll<HTMLButtonElement>('.search-toggle-btn')].find((b) => b.textContent === 'Raw')!.click();
+
+    // Still the rendered body the user is selecting in: not wiped by the raw re-render.
+    expect(el.querySelector('.file-reader-markdown')).not.toBeNull();
+    iframe.remove();
+  });
+
   it('"Open in Browser" opens the browser tab in B, with the path resolved against B', () => {
     createFileReaderPane('b-html', 'page.html');
     getFileReaderInstance('b-html')!.element.querySelector<HTMLButtonElement>('.file-reader-open-browser')!.click();
