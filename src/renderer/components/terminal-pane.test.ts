@@ -53,8 +53,11 @@ vi.mock('@xterm/addon-fit', () => ({
 
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: class FakeWebglAddon {
+    static created: unknown[] = [];
+    disposed = false;
+    constructor() { FakeWebglAddon.created.push(this); }
     onContextLoss = (_: () => void) => ({ dispose() {} });
-    dispose() {}
+    dispose() { this.disposed = true; }
   },
 }));
 
@@ -514,6 +517,155 @@ describe('pane attach, focus and fit are idempotent', () => {
 
     expect(mockResize).toHaveBeenCalledTimes(2);
     expect(mockResize).toHaveBeenLastCalledWith('fit-2', 200, 30);
+  });
+
+  it('re-opens xterm when a pane moves into a container in another document', async () => {
+    // The sessions window is a second document; xterm only rebinds to the new
+    // window when open() runs again after the move.
+    const { createTerminalPane, attachToContainer, getTerminalInstance } = await import('./terminal-pane.js');
+    const otherDoc = new FakeDocument();
+    const first = doc.createElement('div');
+    const sameDoc = doc.createElement('div');
+    const foreign = otherDoc.createElement('div');
+    Object.assign(first, { ownerDocument: doc });
+    Object.assign(sameDoc, { ownerDocument: doc });
+    Object.assign(foreign, { ownerDocument: otherDoc });
+
+    createTerminalPane('xdoc-1', '/project', null, false, '', 'claude');
+    const instance = getTerminalInstance('xdoc-1')!;
+    const element = instance.element as unknown as FakeElement;
+    Object.assign(element, { ownerDocument: doc });
+    attachToContainer('xdoc-1', first as unknown as HTMLElement);
+    markOpened(element);
+    const open = vi.spyOn(instance.terminal, 'open');
+
+    attachToContainer('xdoc-1', sameDoc as unknown as HTMLElement);
+    expect(open).not.toHaveBeenCalled();
+
+    attachToContainer('xdoc-1', foreign as unknown as HTMLElement);
+    expect(foreign.children).toEqual([element]);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(element.querySelector('.xterm-wrap'));
+
+    attachToContainer('xdoc-1', foreign as unknown as HTMLElement);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('hideAllPanes(within) hides only the panes inside that container', async () => {
+    const { createTerminalPane, attachToContainer, hideAllPanes, showPane, getTerminalInstance } = await import('./terminal-pane.js');
+    const mine = doc.createElement('div');
+    const theirs = doc.createElement('div');
+    const contains = (root: FakeElement) => (el: FakeElement) => {
+      for (let n: FakeElement | null = el; n; n = n.parentElement) if (n === root) return true;
+      return false;
+    };
+    Object.assign(mine, { contains: contains(mine) });
+    Object.assign(theirs, { contains: contains(theirs) });
+
+    createTerminalPane('hide-a', '/project', null, false, '', 'claude');
+    createTerminalPane('hide-b', '/project', null, false, '', 'claude');
+    attachToContainer('hide-a', mine as unknown as HTMLElement);
+    attachToContainer('hide-b', theirs as unknown as HTMLElement);
+    showPane('hide-a', false);
+    showPane('hide-b', false);
+    const a = getTerminalInstance('hide-a')!.element as unknown as FakeElement;
+    const b = getTerminalInstance('hide-b')!.element as unknown as FakeElement;
+
+    hideAllPanes(mine as unknown as HTMLElement);
+    expect(a.classList.contains('hidden')).toBe(true);
+    expect(b.classList.contains('hidden')).toBe(false);
+
+    hideAllPanes();
+    expect(b.classList.contains('hidden')).toBe(true);
+  });
+
+  it('fitAllVisible(doc) fits only the panes of that document', async () => {
+    const { createTerminalPane, fitAllVisible, showPane, getTerminalInstance } = await import('./terminal-pane.js');
+    const mockResize = (window as any).vibeyard.pty.resize;
+    const otherDoc = new FakeDocument();
+
+    createTerminalPane('doc-a', '/project', null, false, '', 'claude');
+    createTerminalPane('doc-b', '/project', null, false, '', 'claude');
+    showPane('doc-a', false);
+    showPane('doc-b', false);
+    Object.assign(getTerminalInstance('doc-a')!.element, { ownerDocument: doc });
+    Object.assign(getTerminalInstance('doc-b')!.element, { ownerDocument: otherDoc });
+
+    fitAllVisible(otherDoc as unknown as Document);
+    expect(mockResize).toHaveBeenCalledTimes(1);
+    expect(mockResize).toHaveBeenCalledWith('doc-b', 120, 30);
+
+    fitAllVisible();
+    expect(mockResize).toHaveBeenCalledTimes(2);
+    expect(mockResize).toHaveBeenLastCalledWith('doc-a', 120, 30);
+  });
+
+  it('setFocused reads the active element of the pane\'s own document', async () => {
+    const { createTerminalPane, setFocused, showPane, getTerminalInstance } = await import('./terminal-pane.js');
+    const otherDoc = new FakeDocument();
+
+    createTerminalPane('focus-x', '/project', null, false, '', 'claude');
+    showPane('focus-x', false);
+    const instance = getTerminalInstance('focus-x')!;
+    Object.assign(instance.element, { ownerDocument: otherDoc });
+    const term = instance.terminal as unknown as FakeTerminal;
+
+    // Focus is elsewhere in the main document, but the pane's window has nothing focused.
+    const elsewhere = new FakeElement('input');
+    doc.body.appendChild(elsewhere);
+    doc.activeElement = elsewhere;
+    otherDoc.activeElement = null;
+
+    setFocused('focus-x');
+    expect(term.focusCount).toBe(1);
+  });
+
+  it('setFocused only moves .focused among the panes of the same document', async () => {
+    const { createTerminalPane, setFocused, getTerminalInstance } = await import('./terminal-pane.js');
+    const otherDoc = new FakeDocument();
+
+    createTerminalPane('fdoc-main-1', '/project', null, false, '', 'claude');
+    createTerminalPane('fdoc-main-2', '/project', null, false, '', 'claude');
+    createTerminalPane('fdoc-other', '/project', null, false, '', 'claude');
+    const main1 = getTerminalInstance('fdoc-main-1')!.element as unknown as FakeElement;
+    const main2 = getTerminalInstance('fdoc-main-2')!.element as unknown as FakeElement;
+    const other = getTerminalInstance('fdoc-other')!.element as unknown as FakeElement;
+    Object.assign(main1, { ownerDocument: doc });
+    Object.assign(main2, { ownerDocument: doc });
+    Object.assign(other, { ownerDocument: otherDoc });
+
+    setFocused('fdoc-main-1');
+    setFocused('fdoc-other');
+    // The sessions window's pane takes .focused without stripping the main window's.
+    expect(other.classList.contains('focused')).toBe(true);
+    expect(main1.classList.contains('focused')).toBe(true);
+
+    setFocused('fdoc-main-2');
+    expect(main2.classList.contains('focused')).toBe(true);
+    expect(main1.classList.contains('focused')).toBe(false);
+    expect(other.classList.contains('focused')).toBe(true);
+  });
+
+  it('reloadWebgl disposes the current WebGL addon and loads a fresh one', async () => {
+    const { createTerminalPane, attachToContainer, reloadWebgl, getTerminalInstance } = await import('./terminal-pane.js');
+    const { WebglAddon } = await import('@xterm/addon-webgl');
+    const Fake = WebglAddon as unknown as { created: unknown[] };
+    const container = new FakeElement('div');
+
+    createTerminalPane('webgl-1', '/project', null, false, '', 'claude');
+    attachToContainer('webgl-1', container as unknown as HTMLElement);
+    const before = Fake.created.length;
+    const first = Fake.created[before - 1] as { disposed: boolean };
+    // FakeTerminal.open() does not set it; real xterm does.
+    Object.assign(getTerminalInstance('webgl-1')!.terminal, { element: {} });
+
+    reloadWebgl('webgl-1');
+    expect(first.disposed).toBe(true);
+    expect(Fake.created.length).toBe(before + 1);
+
+    // Unknown session: no-op.
+    reloadWebgl('nope');
+    expect(Fake.created.length).toBe(before + 1);
   });
 
 });

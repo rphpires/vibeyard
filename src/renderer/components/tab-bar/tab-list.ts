@@ -10,11 +10,13 @@ import { endShare } from '../../sharing/share-manager.js';
 import { openInspector, isInspectorOpen, getInspectedSessionId, closeInspector } from '../session-inspector.js';
 import { hasMultipleAvailableProviders, getProviderCapabilities } from '../../provider-availability.js';
 import { buildResumeWithProviderItems } from '../resume-with-provider-menu.js';
-import { isCliSession, tabSessions } from '../../session-utils.js';
+import { isCliSession } from '../../session-utils.js';
+import { viewActiveSessionId, viewTabs } from '../../session-window-state.js';
+import { viewReorderIndex } from '../../state/layout-state.js';
 import { esc } from '../../dom-utils.js';
 import { closeTab, closeTabsByMode } from '../../session-close.js';
 import { hideTabContextMenu, setActiveContextMenu, positionMenu } from './menu.js';
-import { tabListEl } from './dom.js';
+import { tabBarViews, viewProject, type TabBarView } from './views.js';
 import { scrollDelta, bankScroll, planScroll, commitScroll } from './tab-scroll.js';
 import { t } from '../../i18n.js';
 
@@ -28,7 +30,8 @@ function startRename(tab: HTMLElement, project: ProjectRecord, session: SessionR
   const nameSpan = tab.querySelector('.tab-name') as HTMLElement;
   if (nameSpan.querySelector('input')) return;
 
-  const input = document.createElement('input');
+  // The tab's own document: the sessions window's tab bar lives in another one.
+  const input = tab.ownerDocument.createElement('input');
   input.maxLength = MAX_SESSION_NAME_LENGTH;
   input.value = session.name;
   nameSpan.textContent = '';
@@ -63,16 +66,25 @@ function startRename(tab: HTMLElement, project: ProjectRecord, session: SessionR
   input.addEventListener('blur', commit);
 }
 
-function showTabContextMenu(x: number, y: number, project: ProjectRecord, session: SessionRecord, tab: HTMLElement): void {
+export function showTabContextMenu(
+  x: number,
+  y: number,
+  project: ProjectRecord,
+  session: SessionRecord,
+  tab: HTMLElement,
+  view: TabBarView,
+): void {
   hideTabContextMenu();
 
-  const menu = document.createElement('div');
+  // Built in the view's document: the sessions window's menu opens over that window.
+  const doc = view.doc;
+  const menu = doc.createElement('div');
   menu.className = 'tab-context-menu';
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
 
   const renamable = session.type !== 'kanban' && session.type !== 'project-tab' && session.type !== 'team';
-  const renameItem = document.createElement('div');
+  const renameItem = doc.createElement('div');
   renameItem.className = 'tab-context-menu-item' + (renamable ? '' : ' disabled');
   renameItem.textContent = t('contextMenu.tab.rename');
   if (renamable) {
@@ -83,7 +95,7 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
     });
   }
 
-  const closeItem = document.createElement('div');
+  const closeItem = doc.createElement('div');
   closeItem.className = 'tab-context-menu-item';
   closeItem.textContent = t('contextMenu.tab.close');
   closeItem.addEventListener('click', (e) => {
@@ -92,75 +104,76 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
     closeTab(project.id, session.id);
   });
 
-  // Tab indices: detached sessions sit after every tab in project.sessions.
-  const tabs = tabSessions(project);
+  // Indices among the tabs this view shows (detached sessions and the other
+  // window's tabs excluded); moves and batch closes stay within them.
+  const tabs = viewTabs(view.kind, project);
   const sessionIdx = tabs.findIndex((s) => s.id === session.id);
   const totalSessions = tabs.length;
 
-  const separator = document.createElement('div');
+  const separator = doc.createElement('div');
   separator.className = 'tab-context-menu-separator';
 
-  const closeAllItem = document.createElement('div');
+  const closeAllItem = doc.createElement('div');
   closeAllItem.className = 'tab-context-menu-item';
   closeAllItem.textContent = t('contextMenu.tab.closeAll');
   closeAllItem.addEventListener('click', (e) => {
     e.stopPropagation();
     hideTabContextMenu();
-    closeTabsByMode(project.id, 'all');
+    closeTabsByMode(project.id, 'all', undefined, tabs);
   });
 
-  const closeOthersItem = document.createElement('div');
+  const closeOthersItem = doc.createElement('div');
   closeOthersItem.className = 'tab-context-menu-item' + (totalSessions <= 1 ? ' disabled' : '');
   closeOthersItem.textContent = t('contextMenu.tab.closeOthers');
   if (totalSessions > 1) {
     closeOthersItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      closeTabsByMode(project.id, 'others', session.id);
+      closeTabsByMode(project.id, 'others', session.id, tabs);
     });
   }
 
-  const closeRightItem = document.createElement('div');
+  const closeRightItem = doc.createElement('div');
   closeRightItem.className = 'tab-context-menu-item' + (sessionIdx >= totalSessions - 1 ? ' disabled' : '');
   closeRightItem.textContent = t('contextMenu.tab.closeRight');
   if (sessionIdx < totalSessions - 1) {
     closeRightItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      closeTabsByMode(project.id, 'right', session.id);
+      closeTabsByMode(project.id, 'right', session.id, tabs);
     });
   }
 
-  const closeLeftItem = document.createElement('div');
+  const closeLeftItem = doc.createElement('div');
   closeLeftItem.className = 'tab-context-menu-item' + (sessionIdx <= 0 ? ' disabled' : '');
   closeLeftItem.textContent = t('contextMenu.tab.closeLeft');
   if (sessionIdx > 0) {
     closeLeftItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      closeTabsByMode(project.id, 'left', session.id);
+      closeTabsByMode(project.id, 'left', session.id, tabs);
     });
   }
 
-  const moveLeftItem = document.createElement('div');
+  const moveLeftItem = doc.createElement('div');
   moveLeftItem.className = 'tab-context-menu-item' + (sessionIdx <= 0 ? ' disabled' : '');
   moveLeftItem.textContent = t('contextMenu.tab.moveLeft');
   if (sessionIdx > 0) {
     moveLeftItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      appState.reorderSession(project.id, session.id, sessionIdx - 1);
+      moveTab(project, session.id, tabs[sessionIdx - 1].id, false);
     });
   }
 
-  const moveRightItem = document.createElement('div');
+  const moveRightItem = doc.createElement('div');
   moveRightItem.className = 'tab-context-menu-item' + (sessionIdx >= totalSessions - 1 ? ' disabled' : '');
   moveRightItem.textContent = t('contextMenu.tab.moveRight');
   if (sessionIdx < totalSessions - 1) {
     moveRightItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      appState.reorderSession(project.id, session.id, sessionIdx + 1);
+      moveTab(project, session.id, tabs[sessionIdx + 1].id, true);
     });
   }
 
@@ -168,24 +181,25 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
   const isCli = isCliSession(session);
   const isRemote = session.type === 'remote-terminal';
   const providerCapabilities = getProviderCapabilities(session.providerId || 'claude');
-  const canInspect = isCli && providerCapabilities?.hookStatus !== false;
+  // The inspector panel exists only in the main window.
+  const canInspect = isCli && providerCapabilities?.hookStatus !== false && view.kind === 'main';
   const currentlySharing = isSharing(session.id);
 
-  const shareSeparator = document.createElement('div');
+  const shareSeparator = doc.createElement('div');
   shareSeparator.className = 'tab-context-menu-separator';
 
-  const shareItem = document.createElement('div');
+  const shareItem = doc.createElement('div');
   shareItem.className = 'tab-context-menu-item' + (!isCli || currentlySharing ? ' disabled' : '');
   shareItem.textContent = t('contextMenu.tab.shareSession');
   if (isCli && !currentlySharing) {
     shareItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideTabContextMenu();
-      showShareDialog(session.id);
+      showShareDialog(session.id, doc);
     });
   }
 
-  const stopShareItem = document.createElement('div');
+  const stopShareItem = doc.createElement('div');
   stopShareItem.className = 'tab-context-menu-item' + (!currentlySharing ? ' disabled' : '');
   stopShareItem.textContent = t('contextMenu.tab.stopSharing');
   if (currentlySharing) {
@@ -201,13 +215,13 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
   menu.appendChild(moveRightItem);
 
   if (appState.preferences.debugMode) {
-    const sessionSeparator = document.createElement('div');
+    const sessionSeparator = doc.createElement('div');
     sessionSeparator.className = 'tab-context-menu-separator';
 
     const cliSessionId = session.cliSessionId;
     const hasCliSession = !!cliSessionId;
 
-    const copySessionIdItem = document.createElement('div');
+    const copySessionIdItem = doc.createElement('div');
     copySessionIdItem.className = 'tab-context-menu-item' + (!hasCliSession ? ' disabled' : '');
     copySessionIdItem.textContent = t('contextMenu.tab.copyCliSessionId');
     if (hasCliSession) {
@@ -218,7 +232,7 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
       });
     }
 
-    const copyInternalIdItem = document.createElement('div');
+    const copyInternalIdItem = doc.createElement('div');
     copyInternalIdItem.className = 'tab-context-menu-item';
     copyInternalIdItem.textContent = t('contextMenu.tab.copyInternalId');
     copyInternalIdItem.addEventListener('click', (e) => {
@@ -233,7 +247,7 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
   }
 
   // Inspect item — only for CLI sessions
-  const inspectItem = document.createElement('div');
+  const inspectItem = doc.createElement('div');
   const isCurrentlyInspecting = isInspectorOpen() && getInspectedSessionId() === session.id;
   inspectItem.className = 'tab-context-menu-item' + (!canInspect ? ' disabled' : '');
   inspectItem.textContent = isCurrentlyInspecting ? t('contextMenu.tab.closeInspector') : t('contextMenu.tab.inspect');
@@ -249,7 +263,7 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
     });
   }
 
-  const moveSeparator = document.createElement('div');
+  const moveSeparator = doc.createElement('div');
   moveSeparator.className = 'tab-context-menu-separator';
   menu.appendChild(moveSeparator);
   if (isCli || isRemote) {
@@ -258,7 +272,7 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
     if (currentlySharing) menu.appendChild(stopShareItem);
   }
   if (canInspect) {
-    const inspectSeparator = document.createElement('div');
+    const inspectSeparator = doc.createElement('div');
     inspectSeparator.className = 'tab-context-menu-separator';
     menu.appendChild(inspectSeparator);
     menu.appendChild(inspectItem);
@@ -282,26 +296,42 @@ function showTabContextMenu(x: number, y: number, project: ProjectRecord, sessio
   menu.appendChild(closeOthersItem);
   menu.appendChild(closeRightItem);
   menu.appendChild(closeLeftItem);
-  document.body.appendChild(menu);
+  doc.body.appendChild(menu);
   setActiveContextMenu(menu);
 
   positionMenu(menu);
 }
 
+/** Drop `draggedId` before/after `targetId`, leaving tabs between them that another view shows in place. */
+function moveTab(project: ProjectRecord, draggedId: string, targetId: string, after: boolean): void {
+  const toIndex = viewReorderIndex(project, draggedId, targetId, after);
+  if (toIndex !== null) appState.reorderSession(project.id, draggedId, toIndex);
+}
+
+/** Redraw every registered tab bar view. */
 export function render(): void {
+  for (const view of tabBarViews()) renderTabList(view);
+}
+
+/** Redraw one view's tab list: the project it shows, restricted to the view's tabs. */
+export function renderTabList(view: TabBarView): void {
+  const tabListEl = view.tabListEl;
   if (tabListEl.querySelector('.tab-name input')) return;
   // Read before the wipe below clamps it to 0 — this is the only moment a
   // hand-scroll is observable, including the one left behind on the way out
   // of a project.
-  bankScroll(tabListEl.scrollLeft);
+  bankScroll(view.kind, tabListEl.scrollLeft);
   tabListEl.innerHTML = '';
-  const project = appState.activeProject;
+  const project = viewProject(view);
   if (!project) return;
+  const tabs = viewTabs(view.kind, project);
+  // This view's own active tab (the main view of a detached project keeps its own).
+  const activeId = viewActiveSessionId(view.kind, project, tabs);
 
   let activeTab: HTMLElement | null = null;
-  for (const session of tabSessions(project)) {
-    const tab = document.createElement('div');
-    const isActive = session.id === project.activeSessionId;
+  for (const session of tabs) {
+    const tab = view.doc.createElement('div');
+    const isActive = session.id === activeId;
     const isMcp = session.type === 'mcp-inspector';
     const isDiff = session.type === 'diff-viewer';
     const isFileReader = session.type === 'file-reader';
@@ -334,7 +364,7 @@ export function render(): void {
     tab.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).classList.contains('tab-close')) return;
       if (tab.querySelector('.tab-name input')) return;
-      if (session.id !== project.activeSessionId) {
+      if (session.id !== activeId) {
         appState.setActiveSession(project.id, session.id);
       }
     });
@@ -353,7 +383,7 @@ export function render(): void {
     // Right-click context menu
     tab.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      showTabContextMenu(e.clientX, e.clientY, project, session, tab);
+      showTabContextMenu(e.clientX, e.clientY, project, session, tab, view);
     });
 
     // Close button
@@ -389,18 +419,11 @@ export function render(): void {
       e.preventDefault();
       tab.classList.remove('drag-over-left', 'drag-over-right');
       const draggedId = e.dataTransfer!.getData('text/plain');
-      if (!draggedId || draggedId === session.id) return;
+      // Only this view's own tabs reorder here (not one dragged in from the other window).
+      if (!draggedId || !tabs.some((s) => s.id === draggedId)) return;
 
       const rect = tab.getBoundingClientRect();
-      const midX = rect.left + rect.width / 2;
-      let targetIndex = project.sessions.findIndex(s => s.id === session.id);
-      if (e.clientX >= midX) targetIndex++;
-
-      // Adjust for the fact that removing the dragged item shifts indices
-      const fromIndex = project.sessions.findIndex(s => s.id === draggedId);
-      if (fromIndex < targetIndex) targetIndex--;
-
-      appState.reorderSession(project.id, draggedId, targetIndex);
+      moveTab(project, draggedId, session.id, e.clientX >= rect.left + rect.width / 2);
     });
 
     tab.addEventListener('dragend', () => {
@@ -415,7 +438,7 @@ export function render(): void {
     tabListEl.appendChild(tab);
   }
 
-  const plan = planScroll(project.id, project.activeSessionId);
+  const plan = planScroll(view.kind, project.id, activeId);
   // The rebuild above reset the scroll offset. Put this project's own offset back,
   // so neither a re-render the user didn't ask for nor a trip through another
   // project moves the strip from where they scrolled it.
@@ -423,22 +446,21 @@ export function render(): void {
   if (activeTab && plan.autoScroll) {
     // Rects, not offsetLeft: #tab-list is position:static, so offsetLeft is measured
     // from <body> and would carry the sidebar's width into the strip's scroll space.
-    const view = tabListEl.getBoundingClientRect();
+    const strip = tabListEl.getBoundingClientRect();
     const tab = activeTab.getBoundingClientRect();
-    tabListEl.scrollLeft += scrollDelta(tab.left - view.left, tab.right - view.right);
+    tabListEl.scrollLeft += scrollDelta(tab.left - strip.left, tab.right - strip.right);
   }
-  commitScroll(project.id, project.activeSessionId, tabListEl.scrollLeft, plan.autoScroll);
+  commitScroll(view.kind, project.id, activeId, tabListEl.scrollLeft, plan.autoScroll);
 }
 
 // Surgically update a single tab's status dot + tooltip without a full re-render.
 export function updateTabStatus(sessionId: string, status: SessionStatus): void {
-  const dot = tabListEl.querySelector(`.tab-item[data-session-id="${sessionId}"] .tab-status`) as HTMLElement | null;
-  if (dot) {
-    dot.className = `tab-status ${status}`;
-  }
-  const tab = tabListEl.querySelector(`.tab-item[data-session-id="${sessionId}"]`) as HTMLElement | null;
-  if (tab) {
-    const session = appState.activeProject?.sessions.find(s => s.id === sessionId);
+  for (const view of tabBarViews()) {
+    const tab = view.tabListEl.querySelector(`.tab-item[data-session-id="${sessionId}"]`) as HTMLElement | null;
+    if (!tab) continue;
+    const dot = tab.querySelector('.tab-status') as HTMLElement | null;
+    if (dot) dot.className = `tab-status ${status}`;
+    const session = viewProject(view)?.sessions.find(s => s.id === sessionId);
     tab.title = buildTooltip(status, session?.cliSessionId);
   }
 }

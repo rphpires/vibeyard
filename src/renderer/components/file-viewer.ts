@@ -1,10 +1,12 @@
 import { appState } from '../state.js';
+import { focusIfInSessionWindow } from '../reveal.js';
 import { areaLabel } from '../dom-utils.js';
 import { closeSessionIfFileMissing } from '../session-close.js';
 import { destroySearchBar } from './search-bar.js';
 import { isAbsolutePath, dirname, samePath } from '../../shared/platform.js';
 
 interface FileViewerInstance {
+  sessionId: string;
   element: HTMLElement;
   filePath: string;
   area: string;
@@ -16,12 +18,14 @@ interface FileViewerInstance {
 const instances = new Map<string, FileViewerInstance>();
 let unwatchFileChanged: (() => void) | null = null;
 const pendingReloads = new Set<string>();
-let removeSelectionListener: (() => void) | null = null;
+/** selectionchange listeners while a reload waits, one per document a waiting pane is in. */
+const selectionListeners = new Map<Document, () => void>();
 
 function isSelectionInsideFileViewer(sessionId: string): boolean {
   const instance = instances.get(sessionId);
   if (!instance) return false;
-  const sel = window.getSelection();
+  // The pane's own document: a diff in the sessions window is selected there.
+  const sel = instance.element.ownerDocument.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
   const body = instance.element.querySelector('.file-viewer-body');
   if (!body) return false;
@@ -29,34 +33,30 @@ function isSelectionInsideFileViewer(sessionId: string): boolean {
   return body.contains(range.startContainer);
 }
 
+function removeSelectionListeners(): void {
+  for (const remove of selectionListeners.values()) remove();
+  selectionListeners.clear();
+}
+
+/** Reload every waiting pane whose selection is gone; stop listening once none waits. */
 function flushPendingReloads(): void {
-  const ids = [...pendingReloads];
-  pendingReloads.clear();
-  for (const id of ids) {
+  for (const id of [...pendingReloads]) {
+    if (isSelectionInsideFileViewer(id)) continue;
+    pendingReloads.delete(id);
     const inst = instances.get(id);
     if (inst) {
       inst.loaded = false;
       loadDiff(inst, id);
     }
   }
-  // Remove listener when no longer needed
-  if (removeSelectionListener) {
-    removeSelectionListener();
-    removeSelectionListener = null;
-  }
+  if (pendingReloads.size === 0) removeSelectionListeners();
 }
 
-function onSelectionChange(): void {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-    if (pendingReloads.size > 0) flushPendingReloads();
-  }
-}
-
-function ensureSelectionListener(): void {
-  if (removeSelectionListener) return;
-  document.addEventListener('selectionchange', onSelectionChange);
-  removeSelectionListener = () => document.removeEventListener('selectionchange', onSelectionChange);
+function ensureSelectionListener(doc: Document): void {
+  if (selectionListeners.has(doc)) return;
+  const onSelectionChange = (): void => flushPendingReloads();
+  doc.addEventListener('selectionchange', onSelectionChange);
+  selectionListeners.set(doc, () => doc.removeEventListener('selectionchange', onSelectionChange));
 }
 
 function escapeHtml(s: string): string {
@@ -91,7 +91,7 @@ function parseDiffLines(diff: string): HTMLElement {
 }
 
 function resolveFilePath(instance: FileViewerInstance): string {
-  const project = appState.activeProject;
+  const project = appState.projectOfSession(instance.sessionId);
   const basePath = instance.worktreePath ?? project?.path ?? '';
   return isAbsolutePath(instance.filePath)
     ? instance.filePath
@@ -103,7 +103,7 @@ let loadGeneration = 0;
 async function loadDiff(instance: FileViewerInstance, sessionId: string): Promise<void> {
   if (instance.loaded) return;
 
-  const project = appState.activeProject;
+  const project = appState.projectOfSession(instance.sessionId);
   if (!project) return;
 
   if (instance.area === 'untracked') {
@@ -181,7 +181,7 @@ export function createFileViewerPane(sessionId: string, filePath: string, area: 
   body.className = 'file-viewer-body';
   el.appendChild(body);
 
-  const instance: FileViewerInstance = { element: el, filePath, area, worktreePath, resolvedPath: null, loaded: false };
+  const instance: FileViewerInstance = { sessionId, element: el, filePath, area, worktreePath, resolvedPath: null, loaded: false };
   instances.set(sessionId, instance);
 }
 
@@ -192,10 +192,7 @@ export function destroyFileViewerPane(sessionId: string): void {
     window.vibeyard.fs.unwatchDir(dirname(instance.resolvedPath));
   }
   pendingReloads.delete(sessionId);
-  if (pendingReloads.size === 0 && removeSelectionListener) {
-    removeSelectionListener();
-    removeSelectionListener = null;
-  }
+  if (pendingReloads.size === 0) removeSelectionListeners();
   destroySearchBar(sessionId);
   instance.element.remove();
   instances.delete(sessionId);
@@ -220,8 +217,10 @@ export function showFileViewerPane(sessionId: string, isSplit: boolean): void {
   loadDiff(instance, sessionId);
 }
 
-export function hideAllFileViewerPanes(): void {
+/** Hide every file viewer pane, or only those inside `within` (one layout view's container). */
+export function hideAllFileViewerPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.style.display = 'none';
   }
 }
@@ -242,7 +241,8 @@ export function getFileViewerInstance(sessionId: string): FileViewerInstance | u
 export function showFileViewer(filePath: string, area: string, worktreePath?: string): void {
   const project = appState.activeProject;
   if (!project) return;
-  appState.addDiffViewerSession(project.id, filePath, area, worktreePath);
+  // The detached project's diff tab opens in the sessions window: bring it forward.
+  focusIfInSessionWindow(project.id, appState.addDiffViewerSession(project.id, filePath, area, worktreePath));
 }
 
 /** Reload the diff content for a given session (e.g. after git changes) */
@@ -251,7 +251,7 @@ export function reloadFileViewer(sessionId: string): void {
   if (!instance) return;
   if (isSelectionInsideFileViewer(sessionId)) {
     pendingReloads.add(sessionId);
-    ensureSelectionListener();
+    ensureSelectionListener(instance.element.ownerDocument);
     return;
   }
   instance.loaded = false;

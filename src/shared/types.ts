@@ -5,6 +5,11 @@ import type { TeamDomain } from './team-config.js';
 export const ZOOM_MIN = 0.75;
 export const ZOOM_MAX = 2.0;
 
+/** A zoom factor kept within [ZOOM_MIN, ZOOM_MAX]. */
+export function clampZoom(factor: number): number {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor));
+}
+
 // --- Provider ---
 
 export type ProviderId = 'claude' | 'codex' | 'copilot' | 'gemini';
@@ -413,6 +418,8 @@ export interface Preferences {
     fileTree: boolean;
     /** Show the global cross-project "Active Sessions" section in the sidebar. */
     activeSessions: boolean;
+    /** Show the "open sessions in a separate window" button on the active project card. */
+    sessionWindow: boolean;
   };
   /**
    * Which live session statuses count as "active" for the global Active Sessions
@@ -495,6 +502,8 @@ export interface PersistedState {
   starPromptDismissed?: boolean;
   discussionsLastSeen?: string;
   team?: TeamData;
+  /** Sessions window bounds. Written by the main process; renderer saves must not drop it. */
+  sessionWindowBounds?: { x: number; y: number; width: number; height: number };
   /** Global, provider-scoped CLI profiles (e.g. Claude work/personal config dirs). */
   profiles?: Profile[];
 }

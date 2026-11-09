@@ -19,7 +19,7 @@ export function attachPathAutocomplete(pathInput: HTMLInputElement, opts: PathAu
   fieldRow.style.position = 'relative';
   fieldRow.style.flexWrap = 'wrap';
 
-  const dropdown = document.createElement('div');
+  const dropdown = pathInput.ownerDocument.createElement('div');
   dropdown.className = 'path-autocomplete-dropdown';
   fieldRow.appendChild(dropdown);
 
@@ -46,7 +46,7 @@ export function attachPathAutocomplete(pathInput: HTMLInputElement, opts: PathAu
     activeIndex = -1;
     if (dirs.length === 0) { hideDropdown(); return; }
     for (const dir of dirs) {
-      const item = document.createElement('div');
+      const item = pathInput.ownerDocument.createElement('div');
       item.className = 'path-autocomplete-item';
       item.textContent = dirPart + basename(dir);
       item.addEventListener('mousedown', (e) => {

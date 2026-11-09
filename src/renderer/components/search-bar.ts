@@ -137,38 +137,41 @@ export function showSearchBar(sessionId: string, backend: SearchBackend): void {
     return;
   }
 
-  const bar = document.createElement('div');
+  // The bar goes into the pane, so it is built in the pane's document (the sessions
+  // window's when the pane sits there), whoever asked for it.
+  const doc = backend.getContainer().ownerDocument ?? document;
+  const bar = doc.createElement('div');
   bar.className = 'search-bar';
 
-  const input = document.createElement('input');
+  const input = doc.createElement('input');
   input.type = 'text';
   input.placeholder = 'Search...';
   input.spellcheck = false;
 
-  const resultCount = document.createElement('span');
+  const resultCount = doc.createElement('span');
   resultCount.className = 'search-result-count';
 
-  const matchCaseBtn = document.createElement('button');
+  const matchCaseBtn = doc.createElement('button');
   matchCaseBtn.className = 'search-toggle-btn';
   matchCaseBtn.textContent = 'Aa';
   matchCaseBtn.title = 'Match Case';
 
-  const regexBtn = document.createElement('button');
+  const regexBtn = doc.createElement('button');
   regexBtn.className = 'search-toggle-btn';
   regexBtn.textContent = '.*';
   regexBtn.title = 'Use Regular Expression';
 
-  const prevBtn = document.createElement('button');
+  const prevBtn = doc.createElement('button');
   prevBtn.className = 'search-nav-btn';
   prevBtn.textContent = '\u2191';
   prevBtn.title = 'Previous Match (Shift+Enter)';
 
-  const nextBtn = document.createElement('button');
+  const nextBtn = doc.createElement('button');
   nextBtn.className = 'search-nav-btn';
   nextBtn.textContent = '\u2193';
   nextBtn.title = 'Next Match (Enter)';
 
-  const closeBtn = document.createElement('button');
+  const closeBtn = doc.createElement('button');
   closeBtn.className = 'search-nav-btn search-close-btn';
   closeBtn.textContent = '\u2715';
   closeBtn.title = 'Close (Escape)';

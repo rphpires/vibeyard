@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 // The panel's close button calls into session-close, whose modal touches the DOM at import.
+vi.mock('../session-window-handle.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('../session-close.js', () => ({ closeSessionWithConfirm: vi.fn() }));
 import { selectActiveSessions, resolveActiveStatuses } from './active-sessions-panel.js';
 import type { SessionStatus } from '../session-activity.js';

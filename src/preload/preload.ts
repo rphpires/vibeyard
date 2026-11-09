@@ -1,8 +1,9 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import type { CostData, ProviderId, CliProviderMeta, StatsCache, ReadinessResult, ToolFailureData, SettingsWarningData, SettingsValidationResult, StatusLineConflictData, InspectorEvent, ProviderConfig, ReadFileResult, FileStatResult, TopFilesResult, FsChange, DeepSearchResult, GithubFetchResult, GithubRepo, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource, DirEntry } from '../shared/types';
-import { ZOOM_MIN, ZOOM_MAX } from '../shared/types';
+import { clampZoom } from '../shared/types';
 import type { CtlCommand, CtlResult } from '../shared/ctl-protocol';
 import type { FileOpResult } from '../shared/file-names';
+import type { ViewKind } from '../shared/session-window';
 
 export type { CostData } from '../shared/types';
 
@@ -52,6 +53,13 @@ export interface VibeyardApi {
     resyncStatus(): void;
     onToolFailure(callback: (sessionId: string, data: ToolFailureData) => void): () => void;
     onInspectorEvents(callback: (sessionId: string, events: InspectorEvent[]) => void): () => void;
+  };
+  sessionWindow: {
+    focus(): void;
+    close(): void;
+    setTitle(title: string): void;
+    setZoom(factor: number): void;
+    onClosed(callback: () => void): () => void;
   };
   ctl: {
     onCommand(callback: (reqId: string, callerId: string, command: CtlCommand) => void): () => void;
@@ -188,17 +196,24 @@ export interface VibeyardApi {
     set(factor: number): void;
   };
   menu: {
-    onNewProject(callback: () => void): () => void;
-    onNewSession(callback: () => void): () => void;
-    onToggleSplit(callback: () => void): () => void;
-    onNextSession(callback: () => void): () => void;
-    onPrevSession(callback: () => void): () => void;
-    onGotoSession(callback: (index: number) => void): () => void;
-    onToggleDebug(callback: () => void): () => void;
-    onToggleInspector(callback: () => void): () => void;
-    onCloseSession(callback: () => void): () => void;
+    onNewProject(callback: MenuCallback): () => void;
+    onNewSession(callback: MenuCallback): () => void;
+    onToggleSplit(callback: MenuCallback): () => void;
+    onNextSession(callback: MenuCallback): () => void;
+    onPrevSession(callback: MenuCallback): () => void;
+    onGotoSession(callback: (index: number, source: ViewKind) => void): () => void;
+    onToggleDebug(callback: MenuCallback): () => void;
+    onToggleInspector(callback: MenuCallback): () => void;
+    onCloseSession(callback: MenuCallback): () => void;
     rebuild(debugMode: boolean): Promise<void>;
   };
+}
+
+/** A native-menu command; `source` is the window it was clicked in. */
+type MenuCallback = (source: ViewKind) => void;
+
+function onMenu(channel: string, callback: MenuCallback): () => void {
+  return onChannel(channel, (source) => callback(source as ViewKind));
 }
 
 function onChannel(channel: string, callback: (...args: unknown[]) => void): () => void {
@@ -273,6 +288,13 @@ const api: VibeyardApi = {
     onInspectorEvents: (callback) =>
       onChannel('session:inspectorEvents', (sessionId, events) =>
         callback(sessionId as string, events as InspectorEvent[])),
+  },
+  sessionWindow: {
+    focus: () => ipcRenderer.send('sessionWindow:focus'),
+    close: () => ipcRenderer.send('sessionWindow:close'),
+    setTitle: (title) => ipcRenderer.send('sessionWindow:setTitle', title),
+    setZoom: (factor) => ipcRenderer.send('sessionWindow:setZoom', factor),
+    onClosed: (callback) => onChannel('sessionWindow:closed', () => callback()),
   },
   ctl: {
     onCommand: (callback) =>
@@ -412,19 +434,19 @@ const api: VibeyardApi = {
   },
   zoom: {
     set: (factor: number) => {
-      webFrame.setZoomFactor(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, factor)));
+      webFrame.setZoomFactor(clampZoom(factor));
     },
   },
   menu: {
-    onNewProject: (cb) => onChannel('menu:new-project', cb),
-    onNewSession: (cb) => onChannel('menu:new-session', cb),
-    onToggleSplit: (cb) => onChannel('menu:toggle-split', cb),
-    onNextSession: (cb) => onChannel('menu:next-session', cb),
-    onPrevSession: (cb) => onChannel('menu:prev-session', cb),
-    onGotoSession: (cb) => onChannel('menu:goto-session', (index) => cb(index as number)),
-    onToggleDebug: (cb) => onChannel('menu:toggle-debug', cb),
-    onToggleInspector: (cb) => onChannel('menu:toggle-inspector', cb),
-    onCloseSession: (cb) => onChannel('menu:close-session', cb),
+    onNewProject: (cb) => onMenu('menu:new-project', cb),
+    onNewSession: (cb) => onMenu('menu:new-session', cb),
+    onToggleSplit: (cb) => onMenu('menu:toggle-split', cb),
+    onNextSession: (cb) => onMenu('menu:next-session', cb),
+    onPrevSession: (cb) => onMenu('menu:prev-session', cb),
+    onGotoSession: (cb) => onChannel('menu:goto-session', (index, source) => cb(index as number, source as ViewKind)),
+    onToggleDebug: (cb) => onMenu('menu:toggle-debug', cb),
+    onToggleInspector: (cb) => onMenu('menu:toggle-inspector', cb),
+    onCloseSession: (cb) => onMenu('menu:close-session', cb),
     rebuild: (debugMode) => ipcRenderer.invoke('menu:rebuild', debugMode),
   },
 };

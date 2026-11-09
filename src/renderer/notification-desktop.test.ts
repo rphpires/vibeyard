@@ -17,6 +17,8 @@ const mockAppState = vi.hoisted(() => {
     get activeProject() {
       return state.projects.find(p => p.id === state.activeProjectId);
     },
+    projectOfSession(id: string) { return this.findSessionWithProject(id)?.project; },
+    getProject(id: string | null | undefined) { return id ? state.projects.find((p: { id: string }) => p.id === id) : undefined; },
     findSessionWithProject(sessionId: string) {
       for (const project of state.projects) {
         const session = project.sessions.find(s => s.id === sessionId);
@@ -35,12 +37,15 @@ const mockAppState = vi.hoisted(() => {
   return state;
 });
 
+vi.mock('./session-window-handle.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('./state.js', () => ({
   appState: mockAppState,
 }));
 
 import { _resetForTesting as resetActivity, setHookStatus, initSession } from './session-activity.js';
 import { _resetForTesting as resetDesktopNotif, initNotificationDesktop } from './notification-desktop.js';
+import { isSessionWindowFocused } from './session-window-handle.js';
+import * as windowState from './session-window-state.js';
 
 
 // Track Notification constructor calls
@@ -190,7 +195,8 @@ describe('notification-desktop', () => {
     notificationInstances[0].onclick!();
 
     expect(focusSpy).toHaveBeenCalled();
-    expect(mockAppState.setActiveProject).toHaveBeenCalledWith('proj-1');
+    // Through revealSession: proj-1 is already the active project, so only the tab switches.
+    expect(mockAppState.setActiveProject).not.toHaveBeenCalled();
     expect(mockAppState.setActiveSession).toHaveBeenCalledWith('proj-1', 'bg-session');
   });
 
@@ -279,5 +285,42 @@ describe('notification-desktop', () => {
     expect(notificationInstances).toHaveLength(1);
     expect(notificationInstances[0].title).toBe('Vibeyard');
     expect(notificationInstances[0].options.body).toBe('Session is waiting for input');
+  });
+
+  describe('with a project in the sessions window', () => {
+    // proj-2 is detached; its active tab 'b-active' is on screen in the sessions window.
+    beforeEach(() => {
+      windowState._resetForTesting();
+      (mockAppState.projects as Array<Record<string, unknown>>).push({
+        id: 'proj-2', name: 'Proj Two', activeSessionId: 'b-active',
+        sessions: [{ id: 'b-active', name: 'B Active' }, { id: 'b-bg', name: 'B Background' }],
+      });
+      windowState.setDetachedProjectId('proj-2');
+    });
+    afterEach(() => {
+      mockAppState.projects.splice(1);
+      windowState._resetForTesting();
+      vi.mocked(isSessionWindowFocused).mockReturnValue(false);
+    });
+
+    it('does not notify for the sessions window active tab while that window has focus', () => {
+      vi.mocked(isSessionWindowFocused).mockReturnValue(true);
+      initSession('b-active');
+      setHookStatus('b-active', 'working');
+      setHookStatus('b-active', 'completed');
+      expect(notificationInstances).toHaveLength(0);
+    });
+
+    it('notifies for it when the sessions window is not focused, and for its other tabs', () => {
+      initSession('b-active');
+      setHookStatus('b-active', 'working');
+      setHookStatus('b-active', 'completed');
+      expect(notificationInstances).toHaveLength(1);
+      vi.mocked(isSessionWindowFocused).mockReturnValue(true);
+      initSession('b-bg');
+      setHookStatus('b-bg', 'working');
+      setHookStatus('b-bg', 'completed');
+      expect(notificationInstances).toHaveLength(2);
+    });
   });
 });

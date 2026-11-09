@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, powerMonitor, shell } from 'electron';
+import { app, BrowserWindow, dialog, powerMonitor, screen, shell } from 'electron';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
 import { registerIpcHandlers, resetHookWatcher, getCtlServer } from './ipc-handlers';
@@ -6,7 +6,7 @@ import { installCtlScript } from './ctl-script';
 import { stripInheritedCtlEnv } from './ctl-tokens';
 import { killAllPtys } from './pty-manager';
 import { stopAllRemoteMirrors } from './remote-ssh';
-import { flushState, loadState } from './store';
+import { flushState, knownSessionWindowBounds, loadState, saveSessionWindowBounds } from './store';
 import { createAppMenu } from './menu';
 import { restartAndResync } from './hook-status';
 import { initProviders, getAllProviders } from './providers/registry';
@@ -17,15 +17,15 @@ import { checkPythonAvailable } from './prerequisites';
 import { isMac } from './platform';
 import { isCloseConfirmed, setCloseConfirmed } from './close-state';
 import { isHttpUrl } from '../shared/url';
+import { getMainWindow, setMainWindow, getSessionWindow, setSessionWindow } from './windows';
+import { isSessionWindowOpen, resolveSessionWindowBounds, sessionWindowZoom, syncMainThrottling } from './session-window';
 
 // Before anything spawns: never pass a parent Vibeyard tab's ctl identity on.
 stripInheritedCtlEnv();
 
-let mainWindow: BrowserWindow | null = null;
-
 function requestConfirmClose(): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win && !win.isDestroyed()) {
+  const win = getMainWindow();
+  if (win) {
     win.webContents.send('app:confirmClose');
   } else {
     setCloseConfirmed(true);
@@ -33,14 +33,21 @@ function requestConfirmClose(): void {
   }
 }
 
+/** A window open the app does not allow: http(s) goes to the default browser, nothing opens here. */
+function denyOrOpenExternal({ url }: { url: string }): { action: 'deny' } {
+  if (isHttpUrl(url)) shell.openExternal(url);
+  return { action: 'deny' };
+}
+
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const iconPath = path.join(__dirname, '..', '..', '..', 'build', 'icon.png');
+  const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
     minHeight: 500,
     title: 'Vibeyard',
-    icon: path.join(__dirname, '..', '..', '..', 'build', 'icon.png'),
+    icon: iconPath,
     backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, '..', '..', 'preload', 'preload', 'preload.js'),
@@ -51,13 +58,68 @@ function createWindow(): void {
     },
   });
 
+  setMainWindow(mainWindow);
+
   const indexPath = path.join(__dirname, '..', '..', 'renderer', 'index.html');
   mainWindow.loadFile(indexPath);
 
   // Open external links in default browser instead of inside the app
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isHttpUrl(url)) shell.openExternal(url);
-    return { action: 'deny' };
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // The one window the renderer may open: the sessions window (window.open('about:blank', name)).
+    if (isSessionWindowOpen(url, frameName) && !getSessionWindow()) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          ...resolveSessionWindowBounds(knownSessionWindowBounds(), screen.getAllDisplays(), mainWindow.getBounds()),
+          minWidth: 500,
+          minHeight: 300,
+          title: 'Vibeyard',
+          icon: iconPath,
+          backgroundColor: '#000000',
+          autoHideMenuBar: true,
+          webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            webviewTag: true, // browser-tab panes may be moved here
+          },
+        },
+      };
+    }
+    return denyOrOpenExternal({ url });
+  });
+
+  mainWindow.webContents.on('did-create-window', (child) => {
+    setSessionWindow(child);
+    // Main's renderer drives the child (its frames and timers): keep it unthrottled meanwhile.
+    syncMainThrottling(getMainWindow(), true);
+    // The sessions window never opens further windows; http(s) goes to the default browser.
+    child.webContents.setWindowOpenHandler(denyOrOpenExternal);
+    // Match the main window's zoom from the start: in-memory, since the file lags the renderer.
+    child.webContents.setZoomFactor(sessionWindowZoom());
+    // Only about:blank is ever allowed here; everything else is blocked (external http opens in the browser).
+    child.webContents.on('will-navigate', (event, navUrl) => {
+      if (navUrl === 'about:blank') return;
+      event.preventDefault();
+      if (isHttpUrl(navUrl)) shell.openExternal(navUrl);
+    });
+    let boundsTimer: ReturnType<typeof setTimeout> | null = null;
+    const saveBounds = () => {
+      if (boundsTimer) clearTimeout(boundsTimer);
+      boundsTimer = setTimeout(() => {
+        boundsTimer = null;
+        if (child.isDestroyed() || child.isMinimized() || child.isFullScreen()) return;
+        saveSessionWindowBounds(child.getNormalBounds());
+      }, 500);
+    };
+    child.on('move', saveBounds);
+    child.on('resize', saveBounds);
+    child.on('closed', () => {
+      if (boundsTimer) clearTimeout(boundsTimer);
+      setSessionWindow(null);
+      const main = getMainWindow();
+      syncMainThrottling(main, false);
+      if (main) main.webContents.send('sessionWindow:closed');
+    });
   });
 
   // The app document is the ONLY navigation target we ever allow. A stray anchor
@@ -114,6 +176,8 @@ function createWindow(): void {
       requestConfirmClose();
       return;
     }
+    // Confirmed close: take the sessions window down with the main one (it has no confirm flow).
+    getSessionWindow()?.close();
     flushState();
   });
 
@@ -124,7 +188,7 @@ function createWindow(): void {
     stopAllRemoteMirrors();
     resetHookWatcher();
     stopAllFileWatchers();
-    mainWindow = null;
+    setMainWindow(null);
   });
 }
 
@@ -156,7 +220,7 @@ app.whenReady().then(async () => {
   const pythonWarning = checkPythonAvailable();
   if (pythonWarning) {
     console.warn(pythonWarning);
-    dialog.showMessageBox(mainWindow!, {
+    dialog.showMessageBox(getMainWindow()!, {
       type: 'warning',
       title: 'Vibeyard — Python Not Found',
       message: pythonWarning,
@@ -166,7 +230,7 @@ app.whenReady().then(async () => {
   // Install hooks and status scripts for available providers (after window creation so dialogs can attach)
   for (const provider of getAllProviders()) {
     if (provider.validatePrerequisites()) {
-      await provider.installHooks(mainWindow);
+      await provider.installHooks(getMainWindow());
       provider.installStatusScripts();
     }
   }
@@ -178,16 +242,16 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     } else {
-      const win = BrowserWindow.getAllWindows()[0];
-      if (win && !win.isDestroyed()) {
+      const win = getMainWindow();
+      if (win) {
         restartAndResync(win);
       }
     }
   });
 
   powerMonitor.on('resume', () => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win && !win.isDestroyed()) {
+    const win = getMainWindow();
+    if (win) {
       restartAndResync(win);
     }
   });
@@ -200,8 +264,8 @@ app.on('before-quit', (event) => {
     return;
   }
   flushState();
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win && !win.isDestroyed()) {
+  const win = getMainWindow();
+  if (win) {
     win.webContents.send('app:quitting');
   }
   killAllPtys();

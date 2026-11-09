@@ -59,16 +59,18 @@ export function closeInspector(): void {
   import('./split-layout.js').then(m => m.renderLayout());
 }
 
-export function toggleInspector(): void {
+/** Toggle the inspector on `sessionId` (default: the active project's active tab). */
+export function toggleInspector(sessionId?: string): void {
   const project = appState.activeProject;
-  if (!project?.activeSessionId) return;
-  const session = project.sessions.find(s => s.id === project.activeSessionId);
+  const id = sessionId ?? project?.activeSessionId;
+  if (!project || !id) return;
+  const session = project.sessions.find(s => s.id === id);
   if (!session || !canInspectSession(session)) return;
 
   if (isInspectorOpen()) {
     closeInspector();
   } else {
-    openInspector(project.activeSessionId);
+    openInspector(id);
   }
 }
 

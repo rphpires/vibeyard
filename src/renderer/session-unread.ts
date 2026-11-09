@@ -1,5 +1,6 @@
 import { appState } from './state.js';
 import { onChange as onStatusChange, type SessionStatus } from './session-activity.js';
+import { onDetachedChange, onScreenTabIds } from './session-window-state.js';
 
 type UnreadChangeCallback = () => void;
 
@@ -29,9 +30,12 @@ function markActiveSessionRead(): void {
   readPending = true;
   queueMicrotask(() => {
     readPending = false;
-    const sessionId = appState.activeProject?.activeSessionId;
-    if (!sessionId) return;
-    if (unreadSessions.delete(sessionId)) notify();
+    // Each window's active tab: the main one's and the sessions window's.
+    let changed = false;
+    for (const sessionId of onScreenTabIds(appState.projects, appState.activeProjectId)) {
+      if (unreadSessions.delete(sessionId)) changed = true;
+    }
+    if (changed) notify();
   });
 }
 
@@ -45,8 +49,8 @@ export function init(): void {
       const project = appState.projects.find(p => p.sessions.some(s => s.id === sessionId));
       // "Focused", not "visible": a dimmed swarm pane is on screen but still counts
       // as unread — split-layout renders `swarm-unread` on exactly those panes.
-      const isFocusedSession =
-        project?.id === appState.activeProjectId && sessionId === project?.activeSessionId;
+      // The sessions window's active tab is on screen too.
+      const isFocusedSession = onScreenTabIds(appState.projects, appState.activeProjectId).includes(sessionId);
       if (project && !isFocusedSession) {
         unreadSessions.add(sessionId);
         notify();
@@ -62,6 +66,8 @@ export function init(): void {
   // with no click left that could clear it.
   appState.on('session-changed', markActiveSessionRead);
   appState.on('project-changed', markActiveSessionRead);
+  // Detaching a project puts its active tab on screen in the sessions window.
+  onDetachedChange(markActiveSessionRead);
 
   appState.on('session-removed', (data?: unknown) => {
     const d = data as { sessionId?: string } | undefined;

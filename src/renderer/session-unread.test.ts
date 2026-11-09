@@ -42,9 +42,11 @@ import {
   onChange,
   _resetForTesting,
 } from './session-unread';
+import * as windowState from './session-window-state';
 
 beforeEach(() => {
   _resetForTesting();
+  windowState._resetForTesting();
   statusChangeCallbacks.length = 0;
   mockAppState.projects = [];
   mockAppState.activeProjectId = null;
@@ -380,5 +382,56 @@ describe('session-unread', () => {
     onChange(cb);
     removeSession('never-unread');
     expect(cb).not.toHaveBeenCalled();
+  });
+});
+
+describe('session-unread with a project in the sessions window', () => {
+  // p1 active in the main window, p2 detached: s2 is on screen in the sessions window.
+  function setupDetached(): void {
+    setupProjects();
+    mockAppState.activeProjectId = 'p1';
+    windowState.setDetachedProjectId('p2');
+    init();
+  }
+
+  it('does not mark the sessions window active tab unread on completion', () => {
+    setupDetached();
+    simulateStatusChange('s2', 'working');
+    simulateStatusChange('s2', 'completed');
+    expect(isUnread('s2')).toBe(false);
+  });
+
+  it('still marks a sessions-window session that is not its active tab', () => {
+    setupDetached();
+    mockAppState.projects[1].sessions.push({ id: 's3', name: 'Session 3', providerId: 'claude' } as never);
+    simulateStatusChange('s3', 'working');
+    simulateStatusChange('s3', 'completed');
+    expect(isUnread('s3')).toBe(true);
+  });
+
+  it('activating an unread tab in the sessions window (revealSession → session-changed) clears it', async () => {
+    setupDetached();
+    mockAppState.projects[1].sessions.push({ id: 's3', name: 'Session 3', providerId: 'claude' } as never);
+    simulateStatusChange('s3', 'working');
+    simulateStatusChange('s3', 'completed');
+    expect(isUnread('s3')).toBe(true);
+    // revealSession → appState.setActiveSession: activeSessionId moves, main project unchanged.
+    mockAppState.projects[1].activeSessionId = 's3';
+    fireAppStateEvent('session-changed');
+    await flush();
+    expect(isUnread('s3')).toBe(false);
+    expect(mockAppState.activeProjectId).toBe('p1');
+  });
+
+  it('detaching a project marks the tab it now shows as read', async () => {
+    setupProjects();
+    mockAppState.activeProjectId = 'p1';
+    init();
+    simulateStatusChange('s2', 'working');
+    simulateStatusChange('s2', 'completed');
+    expect(isUnread('s2')).toBe(true);
+    windowState.setDetachedProjectId('p2');
+    await flush();
+    expect(isUnread('s2')).toBe(false);
   });
 });

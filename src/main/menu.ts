@@ -1,5 +1,6 @@
 import { app, Menu, BrowserWindow } from 'electron';
 import { isMac, isWin } from './platform';
+import { getMainWindow, windowKindOf } from './windows';
 
 export function createAppMenu(debugMode = false): void {
 
@@ -97,7 +98,12 @@ export function createAppMenu(debugMode = false): void {
             label: 'Reload Main Window',
             accelerator: 'CmdOrCtrl+Alt+R',
             registerAccelerator: false,
-            click: () => BrowserWindow.getFocusedWindow()?.reload(),
+            click: () => {
+              const focused = BrowserWindow.getFocusedWindow();
+              // The sessions window is not reloaded: its state lives in the main renderer.
+              if (windowKindOf(focused) === 'sessions') return;
+              focused?.reload();
+            },
           },
         ] : []),
       ],
@@ -112,9 +118,12 @@ function focusedContents(): Electron.WebContents | undefined {
   return BrowserWindow.getFocusedWindow()?.webContents;
 }
 
+// Menu actions are always handled by the main renderer; `source` (last argument)
+// tells it which window the click came from.
 function sendToRenderer(channel: string, ...args: unknown[]): void {
-  const win = BrowserWindow.getFocusedWindow();
+  const win = getMainWindow();
   if (win) {
-    win.webContents.send(channel, ...args);
+    const source = windowKindOf(BrowserWindow.getFocusedWindow()) ?? 'main';
+    win.webContents.send(channel, ...args, source);
   }
 }

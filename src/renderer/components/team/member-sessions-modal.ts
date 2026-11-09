@@ -4,6 +4,7 @@ import { closeModal, registerModalCleanup } from '../modal.js';
 import { pushModal } from '../modal-manager.js';
 import { isCliSession } from '../../session-utils.js';
 import { getProviderDisplayName } from '../../provider-availability.js';
+import { revealSession } from '../../reveal.js';
 
 const overlay = document.getElementById('modal-overlay')!;
 const titleEl = document.getElementById('modal-title')!;
@@ -70,7 +71,7 @@ function activeRow(session: SessionRecord, projectId: string): SessionRow {
     name: session.name,
     meta: `Open · started ${formatRelative(Date.parse(session.createdAt))} · ${provider}`,
     onClick: () => {
-      appState.setActiveSession(projectId, session.id);
+      revealSession(projectId, session.id);
       closeModal();
     },
   };

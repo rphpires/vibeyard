@@ -1,0 +1,27 @@
+/* Sessions window: a second document (about:blank) built by session-window.ts.
+   Tab bar on top, the pane container fills the rest. The container keeps the
+   #terminal-container id so the split/swarm layout rules in terminal.css apply. */
+.session-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.session-window > #terminal-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.session-window-return {
+  white-space: nowrap;
+}
+
+/* Main window: the detached project's sessions are in the sessions window. */
+.session-window-placeholder-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}

@@ -281,7 +281,7 @@ export function setDebugVisible(show: boolean): void {
       countInterval = null;
     }
   }
-  requestAnimationFrame(fitAllVisible);
+  requestAnimationFrame(() => fitAllVisible());
 }
 
 export function toggleDebugPanel(): void {

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import type { PersistedState } from '../shared/types';
+import type { Bounds } from './session-window';
 
 export type { SessionRecord, ProjectRecord, Preferences, PersistedState } from '../shared/types';
 
@@ -29,6 +30,7 @@ export function loadState(): PersistedState {
       if (file !== STATE_FILE) {
         console.warn('Recovered state from temp file');
       }
+      if (knownBounds === null) knownBounds = parsed.sessionWindowBounds;
       return parsed;
     } catch {
       continue;
@@ -38,7 +40,31 @@ export function loadState(): PersistedState {
   return defaultState();
 }
 
-export function saveState(state: PersistedState): void {
+/**
+ * The sessions window bounds, a field owned by the main process. The renderer saves the
+ * whole state via store:save and may hold a stale copy (or none), so its payload never
+ * wins: main's value is seeded from disk on the first loadState and updated only by
+ * saveSessionWindowBounds. `null` until seeded (`undefined` once seeded means "none").
+ */
+let knownBounds: Bounds | undefined | null = null;
+
+/** The sessions window bounds main knows (its own saves win over the file), without a disk read once seeded. */
+export function knownSessionWindowBounds(): Bounds | undefined {
+  if (knownBounds === null) loadState();
+  return knownBounds ?? undefined;
+}
+
+/** Persist the sessions window bounds (main-process owned) on top of the freshest known state. */
+export function saveSessionWindowBounds(bounds: Bounds): void {
+  const base = lastState ?? loadState();
+  knownBounds = bounds;
+  saveState({ ...base, sessionWindowBounds: bounds });
+}
+
+export function saveState(incoming: PersistedState): void {
+  const state = knownBounds && incoming.sessionWindowBounds !== knownBounds
+    ? { ...incoming, sessionWindowBounds: knownBounds }
+    : incoming;
   if (saveTimer) {
     clearTimeout(saveTimer);
   }
@@ -50,6 +76,14 @@ export function saveState(state: PersistedState): void {
 }
 
 let lastState: PersistedState | null = null;
+
+/**
+ * The freshest state main holds: the last one the renderer saved (the file lags it by
+ * the save debounce), else the file. For reads at runtime, such as the sessions window's zoom.
+ */
+export function currentState(): PersistedState {
+  return lastState ?? loadState();
+}
 
 export function flushState(): void {
   if (lastState) {

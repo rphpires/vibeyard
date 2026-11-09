@@ -21,6 +21,7 @@ vi.mock('./state.js', () => ({
     renameSession: vi.fn(),
   },
 }));
+vi.mock('./session-window-handle.js', () => ({ focusSessionWindow: vi.fn(), closeSessionWindow: vi.fn(), isSessionWindowFocused: vi.fn(() => false), getSessionWindowDocument: vi.fn(() => null) }));
 vi.mock('./session-close.js', () => ({ closeSessionWithConfirm: vi.fn(), needsCloseConfirmation: vi.fn(() => false) }));
 vi.mock('./session-activity.js', () => ({ getStatus: vi.fn(() => 'idle') }));
 vi.mock('./components/terminal-pane.js', () => ({ getTerminalInstance: vi.fn(() => undefined) }));

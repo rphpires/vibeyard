@@ -32,6 +32,7 @@
     "sessionHistory": "Session History",
     "discussions": "Discussions",
     "activeSessions": "Active Sessions",
+    "sessionWindow": "Separate sessions window button",
     "activeSessionStatuses": "Active Session Statuses",
     "board": "Board",
     "showMetricsOnCards": "Show metrics on cards"
@@ -47,6 +48,7 @@
     "team": "Team",
     "files": "Files",
     "git": "Git",
+    "detachSessions": "Open sessions in a separate window",
     "newProject": {
       "title": "New Project",
       "nameLabel": "Name",
@@ -536,5 +538,11 @@
     "about": "About",
     "general": "General",
     "appearance": "Appearance"
+  },
+  "sessionWindow": {
+    "returnToMain": "Return to main window",
+    "placeholder": "This project's sessions are open in another window",
+    "show": "Show",
+    "bringBack": "Bring back"
   }
 }

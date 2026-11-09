@@ -2,6 +2,7 @@ export type { McpServer, Agent, Skill, Command, ProviderConfig, ClaudeConfig, Gi
 import type { CostData, ProviderConfig, GitWorktree, McpResult, ProviderId, CliProviderMeta, StatsCache, ReadinessResult, TopFilesResult, FsChange, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource, DirEntry } from '../shared/types.js';
 import type { CtlCommand, CtlResult } from '../shared/ctl-protocol.js';
 import type { FileOpResult } from '../shared/file-names.js';
+import type { ViewKind } from '../shared/session-window.js';
 
 export interface VibeyardApi {
   pty: {
@@ -46,6 +47,13 @@ export interface VibeyardApi {
     onCostData(callback: (sessionId: string, costData: CostData) => void): () => void;
     onSessionName(callback: (sessionId: string, name: string, cliSessionId: string) => void): () => void;
     resyncStatus(): void;
+  };
+  sessionWindow: {
+    focus(): void;
+    close(): void;
+    setTitle(title: string): void;
+    setZoom(factor: number): void;
+    onClosed(callback: () => void): () => void;
   };
   ctl: {
     onCommand(callback: (reqId: string, callerId: string, command: CtlCommand) => void): () => void;
@@ -143,14 +151,14 @@ export interface VibeyardApi {
     write(text: string, source?: ClipboardSource): Promise<void>;
   };
   menu: {
-    onNewProject(callback: () => void): () => void;
-    onNewSession(callback: () => void): () => void;
-    onToggleSplit(callback: () => void): () => void;
-    onNextSession(callback: () => void): () => void;
-    onPrevSession(callback: () => void): () => void;
-    onGotoSession(callback: (index: number) => void): () => void;
-    onToggleDebug(callback: () => void): () => void;
-    onToggleInspector(callback: () => void): () => void;
-    onCloseSession(callback: () => void): () => void;
+    onNewProject(callback: (source: ViewKind) => void): () => void;
+    onNewSession(callback: (source: ViewKind) => void): () => void;
+    onToggleSplit(callback: (source: ViewKind) => void): () => void;
+    onNextSession(callback: (source: ViewKind) => void): () => void;
+    onPrevSession(callback: (source: ViewKind) => void): () => void;
+    onGotoSession(callback: (index: number, source: ViewKind) => void): () => void;
+    onToggleDebug(callback: (source: ViewKind) => void): () => void;
+    onToggleInspector(callback: (source: ViewKind) => void): () => void;
+    onCloseSession(callback: (source: ViewKind) => void): () => void;
   };
 }

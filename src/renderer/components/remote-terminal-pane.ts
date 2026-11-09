@@ -6,7 +6,7 @@ import { getTerminalTheme } from '../terminal-theme.js';
 import { FitAddon } from '@xterm/addon-fit';
 import type { ShareMode } from '../../shared/sharing-types.js';
 import { appState } from '../state.js';
-import { attachCopyOnSelect, loadWebglWithFallback } from './terminal-utils.js';
+import { attachCopyOnSelect, loadWebglWithFallback, moveOpenedTerminal } from './terminal-utils.js';
 
 interface RemoteTerminalInstance {
   terminal: Terminal;
@@ -106,7 +106,7 @@ export function attachRemoteToContainer(sessionId: string, container: HTMLElemen
 
     loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
-    container.appendChild(instance.element);
+    moveOpenedTerminal(instance.element, container, instance.terminal, xtermWrap as HTMLElement);
   }
 }
 
@@ -127,8 +127,10 @@ export function hideRemotePane(sessionId: string): void {
   instance.element.classList.add('hidden');
 }
 
-export function hideAllRemotePanes(): void {
+/** Hide every remote terminal pane, or only those inside `within` (one layout view's container). */
+export function hideAllRemotePanes(within?: HTMLElement): void {
   for (const [, instance] of instances) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
     instance.element.classList.remove('swarm-dimmed', 'swarm-unread');
   }

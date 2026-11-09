@@ -388,8 +388,10 @@ export function hideInspectorPane(sessionId: string): void {
   instance.element.classList.add('hidden');
 }
 
-export function hideAllInspectorPanes(): void {
+/** Hide every MCP inspector pane, or only those inside `within` (one layout view's container). */
+export function hideAllInspectorPanes(within?: HTMLElement): void {
   for (const instance of instances.values()) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
   }
 }

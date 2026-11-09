@@ -1,10 +1,25 @@
 import { appState } from './state.js';
 import { resolveProjectFilePath } from './state/specialized-sessions.js';
+import { getDetachedProjectId } from './session-window-state.js';
+import { focusIfInSessionWindow } from './reveal.js';
+
+/**
+ * The project, if some window shows it: the main window's active project, or the
+ * project detached into the sessions window (whose terminals pass their own id).
+ */
+function onScreenProject(projectId: string) {
+  const active = appState.activeProject;
+  if (active?.id === projectId) return active;
+  if (projectId === getDetachedProjectId()) return appState.getProject(projectId);
+  return undefined;
+}
 
 /**
  * Open a path in a file-reader tab, but only once the path is known to be an
- * openable file. `projectId` must be the active project — a row rendered for a
- * project the user has since left is dropped rather than opened.
+ * openable file. `projectId` must be on screen — the active project, or the one
+ * detached into the sessions window — so a row rendered for a project the user has
+ * since left is dropped rather than opened. A tab that lands in the sessions
+ * window brings that window forward.
  *
  * Checking first is load-bearing, not defensive: `addFileReaderSession` appends
  * the new tab and makes it active *before* anything touches the filesystem, so
@@ -26,9 +41,9 @@ export async function openFileReaderChecked(
   filePath: string,
   lineNumber?: number,
 ): Promise<void> {
-  const project = appState.activeProject;
-  if (project?.id !== projectId) {
-    console.warn(`[open-file] ${projectId} is not the active project: ${filePath}`);
+  const project = onScreenProject(projectId);
+  if (!project) {
+    console.warn(`[open-file] ${projectId} is not on screen: ${filePath}`);
     return;
   }
 
@@ -52,10 +67,10 @@ export async function openFileReaderChecked(
   // Re-check after the await: the user may have switched projects while the IPC
   // was in flight, and appending to the one they left would silently steal its
   // tab selection.
-  if (appState.activeProject?.id !== projectId) {
-    console.warn(`[open-file] active project changed mid-lookup, dropping ${fullPath}`);
+  if (!onScreenProject(projectId)) {
+    console.warn(`[open-file] project left the screen mid-lookup, dropping ${fullPath}`);
     return;
   }
 
-  appState.addFileReaderSession(projectId, fullPath, lineNumber);
+  focusIfInSessionWindow(projectId, appState.addFileReaderSession(projectId, fullPath, lineNumber));
 }

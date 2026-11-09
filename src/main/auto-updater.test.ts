@@ -14,9 +14,10 @@ const mockSend = vi.fn();
 
 vi.mock('electron', () => ({
   app: { isPackaged: true },
-  BrowserWindow: {
-    getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: mockSend } }],
-  },
+}));
+
+vi.mock('./windows', () => ({
+  getMainWindow: () => ({ isDestroyed: () => false, webContents: { send: mockSend } }),
 }));
 
 import { autoUpdater } from 'electron-updater';
@@ -87,7 +88,6 @@ describe('auto-updater', () => {
     vi.resetModules();
     vi.doMock('electron', () => ({
       app: { isPackaged: false },
-      BrowserWindow: { getAllWindows: () => [] },
     }));
     vi.doMock('electron-updater', () => ({
       autoUpdater: {

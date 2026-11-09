@@ -11,7 +11,8 @@ import type { ProviderId } from '../types.js';
 import { getProviderCapabilities } from '../provider-availability.js';
 import { appState } from '../state.js';
 import { FilePathLinkProvider, GithubLinkProvider } from './terminal-link-provider.js';
-import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, wrapBracketedPaste } from './terminal-utils.js';
+import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, moveOpenedTerminal, wrapBracketedPaste } from './terminal-utils.js';
+import type { WebglAddon } from '@xterm/addon-webgl';
 import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE, droppedFilePaths } from '../drag-types.js';
 import { showTerminalContextMenu } from './terminal-context-menu.js';
 
@@ -19,6 +20,8 @@ interface TerminalInstance {
   terminal: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
+  /** The loaded WebGL renderer, if any (undefined = DOM renderer fallback). */
+  webgl?: WebglAddon;
   element: HTMLDivElement;
   sessionId: string;
   projectPath: string;
@@ -363,10 +366,23 @@ export function attachToContainer(sessionId: string, container: HTMLElement): vo
 
     attachCopyOnSelect(instance.terminal);
     collapseArmedTextareaOnContextMenu(instance.terminal);
-    loadWebglWithFallback(instance.terminal);
+    instance.webgl = loadWebglWithFallback(instance.terminal);
   } else if (instance.element.parentElement !== container) {
-    container.appendChild(instance.element);
+    moveOpenedTerminal(instance.element, container, instance.terminal, xtermWrap as HTMLElement);
   }
+}
+
+/**
+ * Swap the pane's WebGL renderer for a fresh one. Used when a pane comes back from
+ * the sessions window: a context left in a document that closed under it is lost
+ * without a `webglcontextlost` event, so the addon's own fallback never runs.
+ */
+export function reloadWebgl(sessionId: string): void {
+  const instance = instances.get(sessionId);
+  // Never opened: there is no renderer to swap (WebglAddon cannot load before open()).
+  if (!instance?.terminal.element) return;
+  try { instance.webgl?.dispose(); } catch { /* already disposed by onContextLoss */ }
+  instance.webgl = loadWebglWithFallback(instance.terminal);
 }
 
 export function showPane(sessionId: string, split: boolean): void {
@@ -386,8 +402,10 @@ export function hidePane(sessionId: string): void {
   instance.element.classList.add('hidden');
 }
 
-export function hideAllPanes(): void {
+/** Hide every terminal pane, or only those inside `within` (one layout view's container). */
+export function hideAllPanes(within?: HTMLElement): void {
   for (const [, instance] of instances) {
+    if (within && !within.contains(instance.element)) continue;
     instance.element.classList.add('hidden');
     instance.element.classList.remove('swarm-dimmed', 'swarm-unread');
   }
@@ -411,8 +429,10 @@ export function fitTerminal(sessionId: string): void {
   }
 }
 
-export function fitAllVisible(): void {
+/** Fit every visible pane, or only those living in `doc` (one window's document). */
+export function fitAllVisible(doc?: Document): void {
   for (const [sessionId, instance] of instances) {
+    if (doc && instance.element.ownerDocument !== doc) continue;
     if (!instance.element.classList.contains('hidden')) {
       fitTerminal(sessionId);
     }
@@ -437,19 +457,24 @@ export function setFocused(sessionId: string): void {
   // the pane (search-bar.ts) and so is indistinguishable from the terminal here.
   // That is `focusPane` in split-layout.ts's job: a render the user didn't ask for
   // never reaches this function at all.
-  const activeEl = document.activeElement;
+  //
+  // The pane may live in the sessions window, whose focus is its own document's.
+  const doc = instances.get(sessionId)?.element.ownerDocument ?? document;
+  const activeEl = doc.activeElement;
   const shouldFocusTerminal =
     !activeEl ||
-    activeEl === document.body ||
+    activeEl === doc.body ||
     !!activeEl.closest('.terminal-pane');
 
+  // `.focused` is per window: focusing a pane in one window must not strip it from
+  // the pane the other window shows.
   for (const [id, instance] of instances) {
     if (id === sessionId) {
       instance.element.classList.add('focused');
       if (shouldFocusTerminal) {
         instance.terminal.focus();
       }
-    } else {
+    } else if ((instance.element.ownerDocument ?? document) === doc) {
       instance.element.classList.remove('focused');
     }
   }

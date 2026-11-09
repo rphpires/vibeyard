@@ -5,18 +5,32 @@ const addFileReaderSession = vi.fn();
 const openExternal = vi.fn();
 const exists = vi.fn();
 const isDirectory = vi.fn();
+const addBrowserTabSession = vi.fn();
+const readFile = vi.fn();
 let activeProject: { id: string; path: string } | null = { id: 'p1', path: '/repo' };
+// B is detached into the sessions window and owns the file-reader tabs below.
+const projectB = { id: 'B', path: '/b', sessions: [{ id: 'b-md' }, { id: 'b-html' }] };
 
 vi.mock('../state.js', () => ({
   appState: {
     get activeProject() { return activeProject; },
+    getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
+    get projects() { return [activeProject, projectB].filter(Boolean); },
+    projectOfSession(id: string) { return this.findSessionWithProject(id)?.project; },
+    findSessionWithProject: (id: string) => {
+      const session = projectB.sessions.find((s) => s.id === id);
+      return session ? { project: projectB, session } : undefined;
+    },
     addFileReaderSession,
+    addBrowserTabSession,
   },
 }));
+vi.mock('../session-window-handle.js', () => ({ focusSessionWindow: vi.fn() }));
 vi.mock('../session-close.js', () => ({ closeSessionIfFileMissing: vi.fn() }));
 vi.mock('./search-bar.js', () => ({ destroySearchBar: vi.fn() }));
 
-const { renderMarkdownContent } = await import('./file-reader.js');
+const { renderMarkdownContent, createFileReaderPane, showFileReaderPane, getFileReaderInstance } = await import('./file-reader.js');
+const windowState = await import('../session-window-state.js');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -29,7 +43,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   (globalThis as unknown as { window: { vibeyard: unknown } }).window.vibeyard = {
     app: { openExternal },
-    fs: { exists, isDirectory },
+    fs: { exists, isDirectory, readFile, watchDir: vi.fn(), unwatchDir: vi.fn(), onFsChange: vi.fn(() => () => {}) },
   };
 });
 
@@ -111,5 +125,52 @@ describe('renderMarkdownContent link handling', () => {
     wrapper.querySelector('p')!.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
     expect(addFileReaderSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('a file reader of the project detached into the sessions window (main shows p1)', () => {
+  beforeEach(() => {
+    windowState._resetForTesting();
+    windowState.setDetachedProjectId('B');
+  });
+
+  it('a Markdown file link opens in B, resolved against the file, not in the active project', async () => {
+    readFile.mockResolvedValue({ ok: true, content: '[x](../README.md)' });
+    createFileReaderPane('b-md', '/b/docs/a.md');
+    showFileReaderPane('b-md', false);
+    const el = getFileReaderInstance('b-md')!.element;
+    await vi.waitFor(() => expect(el.querySelector('.file-reader-markdown a')).not.toBeNull());
+    el.querySelector('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(addFileReaderSession).toHaveBeenCalledWith('B', '/b/README.md', undefined));
+  });
+
+  it('a selection in its body, in the sessions window document, survives a re-render', async () => {
+    readFile.mockResolvedValue({ ok: true, content: '# Title\n\nsome text' });
+    createFileReaderPane('b-md', '/b/docs/a.md');
+    showFileReaderPane('b-md', false);
+    const el = getFileReaderInstance('b-md')!.element;
+    await vi.waitFor(() => expect(el.querySelector('.file-reader-markdown')).not.toBeNull());
+    const iframe = document.createElement('iframe');
+    document.body.appendChild(iframe);
+    const childDoc = iframe.contentDocument!;
+    childDoc.body.appendChild(el);
+    const range = childDoc.createRange();
+    range.selectNodeContents(el.querySelector('.file-reader-markdown p')!);
+    childDoc.getSelection()!.addRange(range);
+
+    [...el.querySelectorAll<HTMLButtonElement>('.search-toggle-btn')].find((b) => b.textContent === 'Raw')!.click();
+
+    // Still the rendered body the user is selecting in: not wiped by the raw re-render.
+    expect(el.querySelector('.file-reader-markdown')).not.toBeNull();
+    iframe.remove();
+  });
+
+  it('"Open in Browser" opens the browser tab in B, with the path resolved against B', () => {
+    createFileReaderPane('b-html', 'page.html');
+    getFileReaderInstance('b-html')!.element.querySelector<HTMLButtonElement>('.file-reader-open-browser')!.click();
+    expect(addBrowserTabSession).toHaveBeenCalledTimes(1);
+    const [projectId, url] = addBrowserTabSession.mock.calls[0];
+    expect(projectId).toBe('B');
+    expect(url).toContain('/b/page.html');
   });
 });

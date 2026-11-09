@@ -262,6 +262,19 @@ describe('attachClipboardCopyHandler (Windows)', () => {
     await vi.waitFor(() => expect(writeToPty).toHaveBeenCalledWith('pasted text'));
   });
 
+  it('Ctrl+V reads the clipboard of the window that owns the terminal element', async () => {
+    const terminal = new FakeTerminal() as any;
+    const childRead = vi.fn().mockResolvedValue('from child');
+    terminal.element = { ownerDocument: { defaultView: { navigator: { clipboard: { readText: childRead } } } } };
+    const writeToPty = vi.fn();
+    attachClipboardCopyHandler(terminal, undefined, writeToPty);
+
+    terminal.simulateKey({ ctrlKey: true, key: 'v', type: 'keydown', preventDefault: vi.fn() });
+
+    await vi.waitFor(() => expect(writeToPty).toHaveBeenCalledWith('from child'));
+    expect(mockClipboardRead).not.toHaveBeenCalled();
+  });
+
   it('Ctrl+V calls preventDefault to suppress native paste event', () => {
     const terminal = new FakeTerminal();
     const writeToPty = vi.fn();

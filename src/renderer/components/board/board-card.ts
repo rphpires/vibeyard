@@ -10,6 +10,7 @@ import { showContextMenu } from './board-context-menu.js';
 import { showConfirmModal } from '../modal.js';
 import { setPendingPrompt } from '../terminal-pane.js';
 import { t } from '../../i18n.js';
+import { revealSession } from '../../reveal.js';
 
 export function statusLabel(status: SessionStatus): string {
   switch (status) {
@@ -148,7 +149,7 @@ export async function runTask(task: BoardTask): Promise<void> {
   if (task.cliSessionId) {
     const existingSession = project.sessions.find(s => s.cliSessionId === task.cliSessionId);
     if (existingSession) {
-      appState.setActiveSession(project.id, existingSession.id);
+      revealSession(project.id, existingSession.id);
       updateTask(task.id, { sessionId: existingSession.id });
       resumed = true;
     } else {
@@ -157,6 +158,7 @@ export async function runTask(task: BoardTask): Promise<void> {
         const session = await appState.resumeFromHistorySafe(project.id, archived.id);
         if (session) {
           updateTask(task.id, { sessionId: session.id });
+          revealSession(project.id, session.id);
           resumed = true;
         }
       }
@@ -175,6 +177,8 @@ export async function runTask(task: BoardTask): Promise<void> {
       : appState.addSession(project.id, sessionName, undefined, task.providerId, task.profileId);
     if (session) {
       updateTask(task.id, { sessionId: session.id });
+      // A detached project's new session opens in the sessions window: bring it forward.
+      revealSession(project.id, session.id);
       const activeCol = getColumnByBehavior('active');
       if (activeCol && task.columnId !== activeCol.id) {
         moveTask(task.id, activeCol.id, 0);
@@ -191,7 +195,7 @@ export async function runTask(task: BoardTask): Promise<void> {
 export function focusTaskSession(task: BoardTask): void {
   const project = appState.activeProject;
   if (!project || !task.sessionId) return;
-  appState.setActiveSession(project.id, task.sessionId);
+  revealSession(project.id, task.sessionId);
 }
 
 function truncate(str: string, len: number): string {

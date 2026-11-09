@@ -50,7 +50,8 @@ function renderItems(instance: BrowserTabInstance, actions: SendMenuActions): vo
   const menu = instance.sendMenuEl;
   menu.innerHTML = '';
 
-  const project = appState.activeProject;
+  // The tab's own project: in the sessions window it is not the active one.
+  const project = appState.projectOfSession(instance.sessionId);
   const sessions = (project?.sessions ?? []).filter(isCliSession);
 
   for (const s of sessions) {

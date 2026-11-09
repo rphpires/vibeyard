@@ -480,6 +480,17 @@
   border-color: color-mix(in srgb, var(--project-color) 45%, var(--border));
 }
 
+/* Project whose sessions are open in the separate window: accent edge marks it
+   on the card, active or not. */
+.project-row.detached-window .project-item {
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+.project-row.detached-window .project-item .project-path::before {
+  content: '\2197\00a0';
+  color: var(--accent);
+}
+
 /* Collapsed sidebar shows only the active project's avatar: tint the tile. */
 #sidebar.collapsed .project-row.has-color .project-avatar {
   background: linear-gradient(160deg, var(--project-color), color-mix(in srgb, var(--project-color) 70%, #000));

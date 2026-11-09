@@ -4,6 +4,7 @@ import { shortcutManager } from '../shortcuts.js';
 import { isWin } from '../platform.js';
 import { appState } from '../state.js';
 import type { ClipboardSource } from '../../shared/types.js';
+import { windowOf } from '../frame.js';
 
 type ExtraKeyHandler = (e: KeyboardEvent) => boolean | undefined;
 
@@ -12,6 +13,24 @@ type ExtraKeyHandler = (e: KeyboardEvent) => boolean | undefined;
 export function wrapBracketedPaste(terminal: Terminal, text: string): string {
   const modes = (terminal as unknown as { modes?: { bracketedPasteMode?: boolean } }).modes;
   return modes?.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
+}
+
+/**
+ * Move an already-opened terminal pane into `container`. Moving into another window's
+ * document (the sessions window): xterm only rebinds to that window (its rAF, DPR,
+ * listeners) when open() runs again after the move.
+ */
+export function moveOpenedTerminal(element: HTMLElement, container: HTMLElement, terminal: Terminal, xtermWrap: HTMLElement): void {
+  const previousDoc = element.ownerDocument;
+  container.appendChild(element);
+  if (container.ownerDocument !== previousDoc) terminal.open(xtermWrap);
+}
+
+// Reading the clipboard needs a focused document, so a terminal living in
+// another window (the session window) must use that window's navigator.
+export function clipboardFor(terminal: Terminal): Clipboard {
+  const doc = terminal.element?.ownerDocument;
+  return (doc ? windowOf(doc).navigator : navigator).clipboard;
 }
 
 // Every terminal copy goes through the main process rather than
@@ -95,7 +114,7 @@ export function attachClipboardCopyHandler(
     // Windows: Ctrl+V → async paste clipboard to PTY
     if (isWin && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'v' && writeToPty) {
       if (e.type === 'keydown') {
-        navigator.clipboard.readText().then((text) => {
+        clipboardFor(terminal).readText().then((text) => {
           if (!text) return;
           writeToPty(wrapBracketedPaste(terminal, text));
         }).catch(() => {});
@@ -113,10 +132,13 @@ export function attachClipboardCopyHandler(
 
 // Disposing the addon on context loss lets xterm.js fall back to the DOM renderer
 // instead of keeping a dead GPU texture atlas (black-box glyphs).
-export function loadWebglWithFallback(terminal: Terminal): void {
+export function loadWebglWithFallback(terminal: Terminal): WebglAddon | undefined {
   try {
     const addon = new WebglAddon();
     terminal.loadAddon(addon);
     addon.onContextLoss(() => addon.dispose());
-  } catch {}
+    return addon;
+  } catch {
+    return undefined;
+  }
 }

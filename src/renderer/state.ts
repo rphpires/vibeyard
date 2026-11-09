@@ -28,6 +28,23 @@ import {
   buildTeamSession,
 } from './state/session-factory.js';
 import { NavHistory } from './state/nav-history.js';
+import {
+  getDetachedProjectId,
+  isMainViewTabOfDetached,
+  setMainViewSelection,
+  viewActiveSessionId,
+  viewKindFor,
+  viewKindOfProject,
+  viewShowsSession,
+  viewTabs,
+  type ViewKind,
+} from './session-window-state.js';
+
+/** Where a Back/Forward step landed. */
+export interface NavTarget {
+  projectId: string;
+  sessionId: string;
+}
 import { defaultSessionName } from './state/session-naming.js';
 import { createDefaultBoard, ensureProjectDefaults, hydrateLoadedState, serializeForSave } from './state/persistence.js';
 import {
@@ -122,7 +139,7 @@ const defaultPreferences: Preferences = {
   copyOnSelect: false,
   zoomFactor: 1.0,
   readinessExcludedProviders: [],
-  sidebarViews: { gitPanel: true, sessionHistory: true, discussions: true, fileTree: true, activeSessions: true },
+  sidebarViews: { gitPanel: true, sessionHistory: true, discussions: true, fileTree: true, activeSessions: true, sessionWindow: true },
   boardCardMetrics: true,
   locale: 'en',
 };
@@ -151,30 +168,39 @@ class AppState {
     return undefined;
   }
 
-  private findProjectBySession(sessionId: string): ProjectRecord | undefined {
+  /**
+   * The project owning a session. Pane features use it rather than `activeProject`:
+   * a pane of the project detached into the sessions window belongs to that project
+   * while the main window shows another one.
+   */
+  projectOfSession(sessionId: string): ProjectRecord | undefined {
     return this.findSessionWithProject(sessionId)?.project;
   }
 
-  navigateBack(): void {
-    this.stepNav(-1);
+  /** Step back in tab history. Returns where it went (the caller reveals a sessions-window tab). */
+  navigateBack(): NavTarget | undefined {
+    return this.stepNav(-1);
   }
 
-  navigateForward(): void {
-    this.stepNav(1);
+  navigateForward(): NavTarget | undefined {
+    return this.stepNav(1);
   }
 
-  private stepNav(direction: 1 | -1): void {
-    const id = this.nav.findNextValid(direction, (sid) => !!this.findProjectBySession(sid));
-    if (!id) return;
-    const project = this.findProjectBySession(id)!;
+  private stepNav(direction: 1 | -1): NavTarget | undefined {
+    const id = this.nav.findNextValid(direction, (sid) => !!this.projectOfSession(sid));
+    if (!id) return undefined;
+    const { project, session } = this.findSessionWithProject(id)!;
+    // A tab of the sessions window is shown there: the main window keeps its project.
+    const inSessionsWindow = viewShowsSession('sessions', project.id, session);
     this.nav.withSuppression(() => {
-      const projectChanged = this.state.activeProjectId !== project.id;
-      this.state.activeProjectId = project.id;
-      project.activeSessionId = id;
+      const projectChanged = !inSessionsWindow && this.state.activeProjectId !== project.id;
+      if (projectChanged) this.state.activeProjectId = project.id;
+      this.selectTab(project, id);
       this.persist();
       if (projectChanged) this.emit('project-changed');
       this.emit('session-changed');
     });
+    return { projectId: project.id, sessionId: id };
   }
 
   on(event: EventType, cb: EventCallback): () => void {
@@ -219,6 +245,11 @@ class AppState {
 
   get activeProject(): ProjectRecord | undefined {
     return this.state.projects.find((p) => p.id === this.state.activeProjectId);
+  }
+
+  /** The project with this id (undefined for no id or an unknown one). */
+  getProject(id: string | null | undefined): ProjectRecord | undefined {
+    return id ? this.state.projects.find((p) => p.id === id) : undefined;
   }
 
   get activeSession(): SessionRecord | undefined {
@@ -460,7 +491,7 @@ class AppState {
       envVars: envVars ?? project.defaultEnv,
       location,
     });
-    attachSessionToProject(project, session, { addToSwarm: true });
+    this.attachTab(project, session, { addToSwarm: true });
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -495,26 +526,59 @@ class AppState {
       pendingCliName: name,
       ...(opts.initialPrompt ? { pendingInitialPrompt: opts.initialPrompt } : {}),
     };
-    attachSessionToProject(project, session, { addToSwarm: true });
+    this.attachTab(project, session, { addToSwarm: true });
     if (!opts.focus && previousActive) project.activeSessionId = previousActive;
     // A background session isn't the active tab, so it must not touch nav history
     // (a push would truncate forward history and make the first Back a no-op).
     this.commitNewSession(projectId, session, { pushNav: project.activeSessionId === session.id });
     // --focus into another project brings that project forward too; switching
     // after the commit keeps session-added keyed to its own (then background) project.
-    if (opts.focus && this.state.activeProjectId !== projectId) this.setActiveProject(projectId);
+    // Not for the detached project: its sessions live in the sessions window, and the
+    // main window keeps its own project (the bridge brings that window forward).
+    if (opts.focus && this.state.activeProjectId !== projectId && projectId !== getDetachedProjectId()) {
+      this.setActiveProject(projectId);
+    }
     return session;
   }
 
   private activateExistingSession(project: ProjectRecord, existing: SessionRecord): SessionRecord {
-    if (project.activeSessionId !== existing.id || existing.detached) {
+    if (this.selectedTabId(project, existing) !== existing.id || existing.detached) {
       this.reattach(project, existing.id);
-      project.activeSessionId = existing.id;
+      this.selectTab(project, existing.id);
       this.pushNav(existing.id);
       this.persist();
       this.emit('session-changed');
     }
     return existing;
+  }
+
+  /** The tab currently selected in the view that shows `session`. */
+  private selectedTabId(project: ProjectRecord, session: SessionRecord): string | null {
+    return viewActiveSessionId(viewKindFor(project.id, session), project);
+  }
+
+  /**
+   * Make `sessionId` the selected tab of the view that shows it. While the project is
+   * detached, a project-level tab (Overview/Kanban/Team) is selected in the main view
+   * only; `activeSessionId` stays with the sessions window.
+   */
+  private selectTab(project: ProjectRecord, sessionId: string): void {
+    const session = project.sessions.find((s) => s.id === sessionId);
+    if (session && isMainViewTabOfDetached(project.id, session)) {
+      setMainViewSelection(sessionId);
+    } else {
+      project.activeSessionId = sessionId;
+    }
+  }
+
+  /** attachSessionToProject, with the new tab selected in the view that shows it (selectTab). */
+  private attachTab(project: ProjectRecord, session: SessionRecord, opts?: { addToSwarm?: boolean }): void {
+    const previous = project.activeSessionId;
+    attachSessionToProject(project, session, opts);
+    if (isMainViewTabOfDetached(project.id, session)) {
+      project.activeSessionId = previous;
+      setMainViewSelection(session.id);
+    }
   }
 
   private commitNewSession(projectId: string, session: SessionRecord, opts: { pushNav?: boolean } = {}): void {
@@ -532,7 +596,7 @@ class AppState {
     if (existing) return this.activateExistingSession(project, existing);
 
     const session = buildDiffViewerSession({ name: basename(filePath), filePath, area, worktreePath });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -542,7 +606,7 @@ class AppState {
     if (!project) return undefined;
 
     const session = buildRemoteSession({ id: sessionId, name: `Remote: ${hostSessionName}`, remoteHostName: hostSessionName, shareMode });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -557,7 +621,7 @@ class AppState {
     }
 
     const session = buildBrowserTabSession({ name: browserTabNameFromUrl(url), url });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -572,7 +636,7 @@ class AppState {
     if (existing) return this.activateExistingSession(project, existing);
 
     const session = buildProjectTabSession({ projectName: project.name });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -589,7 +653,7 @@ class AppState {
     if (existing) return this.activateExistingSession(project, existing);
 
     const session = buildKanbanSession({ projectName: project.name });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -604,7 +668,7 @@ class AppState {
     if (existing) return this.activateExistingSession(project, existing);
 
     const session = buildTeamSession({ projectName: project.name });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -742,7 +806,7 @@ class AppState {
     if (!providerId) return undefined;
 
     const session = buildTeamChatSession(project, member, providerId, MAX_SESSION_NAME_LENGTH);
-    attachSessionToProject(project, session, { addToSwarm: true });
+    this.attachTab(project, session, { addToSwarm: true });
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -790,7 +854,7 @@ class AppState {
     }
 
     const session = buildFileReaderSession({ name: basename(normalizedPath), filePath: normalizedPath, lineNumber });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -800,7 +864,7 @@ class AppState {
     if (!project) return undefined;
 
     const session = buildMcpInspectorSession({ name });
-    attachSessionToProject(project, session);
+    this.attachTab(project, session);
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -954,7 +1018,7 @@ class AppState {
     if (existing) return this.activateExistingSession(project, existing);
 
     const session = buildResumedSession(archived);
-    attachSessionToProject(project, session, { addToSwarm: true });
+    this.attachTab(project, session, { addToSwarm: true });
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -1000,7 +1064,7 @@ class AppState {
     // reopens against the right config dir; ignore a stale/cross-provider id.
     const validProfileId = profileId && this.profiles.some((p) => p.id === profileId && p.providerId === providerId) ? profileId : undefined;
     const session = buildResumedSessionFromCliId(cliSessionId, name, providerId, validProfileId);
-    attachSessionToProject(project, session, { addToSwarm: true });
+    this.attachTab(project, session, { addToSwarm: true });
     this.commitNewSession(projectId, session);
     return session;
   }
@@ -1043,7 +1107,7 @@ class AppState {
       ...locationFields(resolved), // keep running in the source's own folder
       pendingInitialPrompt: initialPrompt,
     };
-    attachSessionToProject(project, session, { addToSwarm: true });
+    this.attachTab(project, session, { addToSwarm: true });
     // commitNewSession persist()s before emitting session-added; persist strips
     // the transient pendingInitialPrompt, but split-layout.onSessionAdded reads
     // it from in-memory state synchronously inside the emit.
@@ -1064,7 +1128,7 @@ class AppState {
     const project = this.state.projects.find((p) => p.id === projectId);
     if (!project) return;
     this.reattach(project, sessionId);
-    project.activeSessionId = sessionId;
+    this.selectTab(project, sessionId);
     this.pushNav(sessionId);
     this.persist();
     this.emit('session-changed');
@@ -1167,32 +1231,50 @@ class AppState {
     this.toggleSwarm();
   }
 
-  toggleSwarm(): void {
-    const project = this.activeProject;
+  /** Toggle swarm on `projectId` (default: the active project), over the tabs of the view that lays it out. */
+  toggleSwarm(projectId?: string): void {
+    const project = this.projectOrActive(projectId);
     if (!project) return;
-    toggleSwarmMode(project);
+    toggleSwarmMode(project, viewTabs(viewKindOfProject(project.id), project));
     this.persist();
     this.emit('layout-changed');
   }
 
-  cycleSession(direction: 1 | -1): void {
-    const project = this.activeProject;
-    if (!project) return;
-    const next = cycleSessionId(project, direction);
-    if (!next) return;
-    project.activeSessionId = next;
-    this.pushNav(next);
-    this.persist();
-    this.emit('session-changed');
+  /**
+   * Cycle the tabs of one view of `projectId` (default: the active project). `view`
+   * defaults to the view that holds the project's sessions: the sessions window for
+   * the detached project, else the main window; with no project, the main window.
+   */
+  cycleSession(direction: 1 | -1, projectId?: string, view?: ViewKind): void {
+    const target = this.viewTarget(projectId, view);
+    if (!target) return;
+    const { project, kind } = target;
+    const next = cycleSessionId(project, direction, viewTabs(kind, project), viewActiveSessionId(kind, project));
+    if (next) this.selectAndCommit(project, next);
   }
 
-  gotoSession(index: number): void {
-    const project = this.activeProject;
-    if (!project) return;
-    const next = sessionIdAtIndex(project, index);
-    if (!next) return;
-    project.activeSessionId = next;
-    this.pushNav(next);
+  /** Go to the tab at `index` of one view (same defaults as cycleSession). */
+  gotoSession(index: number, projectId?: string, view?: ViewKind): void {
+    const target = this.viewTarget(projectId, view);
+    if (!target) return;
+    const next = sessionIdAtIndex(target.project, index, viewTabs(target.kind, target.project));
+    if (next) this.selectAndCommit(target.project, next);
+  }
+
+  private projectOrActive(projectId?: string): ProjectRecord | undefined {
+    return projectId ? this.getProject(projectId) : this.activeProject;
+  }
+
+  private viewTarget(projectId?: string, view?: ViewKind): { project: ProjectRecord; kind: ViewKind } | undefined {
+    const project = this.projectOrActive(projectId);
+    if (!project) return undefined;
+    const kind = view ?? (projectId ? viewKindOfProject(projectId) : 'main');
+    return { project, kind };
+  }
+
+  private selectAndCommit(project: ProjectRecord, sessionId: string): void {
+    this.selectTab(project, sessionId);
+    this.pushNav(sessionId);
     this.persist();
     this.emit('session-changed');
   }

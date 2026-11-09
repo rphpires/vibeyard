@@ -20,7 +20,9 @@ import {
 import { attachHoverCard } from './hover-card.js';
 import { mountGitPanel, closeGitPanel } from './git-panel.js';
 import { gitChangeCount, onChange as onGitStatusChange } from '../git-status.js';
-import { ICON_KANBAN, ICON_TEAM, ICON_OVERVIEW, ICON_SESSIONS, ICON_FILES, ICON_GIT } from '../icons.js';
+import { ICON_KANBAN, ICON_TEAM, ICON_OVERVIEW, ICON_SESSIONS, ICON_FILES, ICON_GIT, ICON_DETACH } from '../icons.js';
+import { revealProject } from '../reveal.js';
+import { getDetachedProjectId, onDetachedChange } from '../session-window-state.js';
 import { t } from '../i18n.js';
 import { PROJECT_COLOR_PALETTE } from '../project-colors.js';
 
@@ -92,6 +94,8 @@ export function initSidebar(): void {
   appState.on('readiness-changed', render);
 
   onUnreadChange(render);
+  // The detached-window indicator and the button's selected state follow the detached project.
+  onDetachedChange(render);
   // Keep the active project's Git tab badge in sync. Surgical when the button is
   // already present; a full render only when repo-ness first becomes known (the
   // button needs to appear/disappear).
@@ -191,13 +195,58 @@ export function projectProfileLabel(project: ProjectRecord): string | undefined 
   return providerProfiles.find((p) => p.id === id)?.name ?? t('sidebar.default');
 }
 
+/** Class list of a project card; `detached-window` marks the project whose sessions live in the separate window. */
+export function projectRowClasses(project: ProjectRecord, isActive: boolean, detachedId: string | null): string {
+  return 'project-row'
+    + (isActive ? ' active' : '')
+    + (project.temporary ? ' temporary-project' : '')
+    + (project.id === detachedId ? ' detached-window' : '');
+}
+
+/**
+ * Card click: the detached project's sessions are not in this window, so the click
+ * reveals them (focuses the session window) instead of switching to it; every other
+ * card keeps the usual behavior (the active card ignores clicks).
+ */
+export function handleProjectCardClick(projectId: string, isActive: boolean, detachedId: string | null): void {
+  if (projectId === detachedId) {
+    revealProject(projectId);
+    return;
+  }
+  if (isActive) return;
+  appState.setActiveProject(projectId);
+}
+
+/** Visibility and selected state of the "separate window" action button. */
+export function detachButtonState(
+  project: ProjectRecord,
+  detachedId: string | null,
+  prefEnabled: boolean,
+): { visible: boolean; active: boolean } {
+  if (project.temporary) return { visible: false, active: false };
+  const active = project.id === detachedId;
+  // Turning the preference off never closes an open window, so its button stays to close it.
+  return { visible: prefEnabled || active, active };
+}
+
+/**
+ * Loaded on click: session-window.ts imports the whole layout (split-layout, tab bar,
+ * every pane), and a static import here would pull all of it into everything that
+ * imports the sidebar. In the bundle the import resolves in a microtask.
+ */
+export async function toggleSessionWindow(project: ProjectRecord, detachedId: string | null): Promise<void> {
+  const { openSessionWindow, closeSessionWindow } = await import('../session-window.js');
+  if (project.id === detachedId) closeSessionWindow();
+  else openSessionWindow(project.id);
+}
+
 function buildProjectRow(project: ProjectRecord, isActive: boolean, opts: RenderOpts): HTMLElement {
   const { fileTreeEnabled, historyEnabled, gitEnabled } = opts;
 
   const wrapper = document.createElement('div');
   // The wrapper carries `.active` so CSS can style the whole row (header + tabs
   // + panel) as one card without a `:has()` selector.
-  wrapper.className = 'project-row' + (isActive ? ' active' : '') + (project.temporary ? ' temporary-project' : '');
+  wrapper.className = projectRowClasses(project, isActive, getDetachedProjectId());
   // Canonical #rrggbb: normalized by setProjectColor and on load (ensureProjectDefaults).
   const color = project.color;
   if (color) {
@@ -241,8 +290,7 @@ function buildProjectRow(project: ProjectRecord, isActive: boolean, opts: Render
   el.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
     if (target.classList.contains('project-delete')) return;
-    if (isActive) return;
-    appState.setActiveProject(project.id);
+    handleProjectCardClick(project.id, isActive, getDetachedProjectId());
   });
 
   el.querySelector('.project-delete')?.addEventListener('click', () => {
@@ -406,6 +454,18 @@ function buildProjectActions(
       setProjectPanel(project.id, openPanel === 'git' ? null : 'git');
     });
     actions.appendChild(gitBtn);
+  }
+
+  const detachedId = getDetachedProjectId();
+  const detach = detachButtonState(project, detachedId, appState.preferences.sidebarViews?.sessionWindow ?? true);
+  if (detach.visible) {
+    const detachBtn = makeActionButton(t('sidebar.detachSessions'), ICON_DETACH, detach.active);
+    detachBtn.classList.add('detach-toggle');
+    detachBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void toggleSessionWindow(project, detachedId);
+    });
+    actions.appendChild(detachBtn);
   }
 
   return actions;

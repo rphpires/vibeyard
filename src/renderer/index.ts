@@ -3,6 +3,7 @@ import { initSidebar, promptNewProject } from './components/sidebar.js';
 import { initTabBar } from './components/tab-bar.js';
 import { initSplitLayout } from './components/split-layout.js';
 import { initKeybindings } from './keybindings.js';
+import { initSessionWindow } from './session-window.js';
 import { handlePtyData, destroyTerminal, updateCostDisplay, updateContextDisplay, applyThemeToAllTerminals, refreshProfileLabels } from './components/terminal-pane.js';
 import { setIdle, setHookStatus, notifyInterrupt } from './session-activity.js';
 import { parseCost, setCostData, onChange as onCostChange } from './session-cost.js';
@@ -183,6 +184,7 @@ async function main(): Promise<void> {
   initTabBar();
   initSplitLayout();
   initKeybindings();
+  initSessionWindow();
   initNotificationSound();
   initNotificationDesktop();
   initProjectTerminal();

@@ -220,6 +220,18 @@ describe('search-bar', () => {
     destroySearchBar('session-1');
   });
 
+  it('builds the bar in its container document (a pane of the sessions window)', async () => {
+    const { showSearchBar, destroySearchBar } = await import('./search-bar.js');
+    const childDoc = new FakeDocument();
+    const createInChild = vi.spyOn(childDoc, 'createElement');
+    const createInMain = vi.spyOn(document as unknown as FakeDocument, 'createElement');
+    const container = Object.assign(new FakeElement('div'), { ownerDocument: childDoc });
+    showSearchBar('session-3', new FakeBackend(container) as never);
+    expect(createInChild).toHaveBeenCalled();
+    expect(createInMain).not.toHaveBeenCalled();
+    destroySearchBar('session-3');
+  });
+
   it('shows no results and clears the status when the query is empty', async () => {
     const { showSearchBar, destroySearchBar } = await import('./search-bar.js');
     const container = new FakeElement('div');

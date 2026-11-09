@@ -1,4 +1,5 @@
 import { appState } from './state.js';
+import { onScreenTabIds } from './session-window-state.js';
 import { onChange, type SessionStatus } from './session-activity.js';
 
 const previousStatus = new Map<string, SessionStatus>();
@@ -43,9 +44,9 @@ export function initNotificationSound(): void {
     const prev = previousStatus.get(sessionId);
     previousStatus.set(sessionId, status);
 
-    // Don't notify for the session the user is currently looking at
-    const activeId = appState.activeProject?.activeSessionId;
-    if (prev === 'working' && (status === 'waiting' || status === 'completed' || status === 'input') && appState.preferences.soundOnSessionWaiting && sessionId !== activeId) {
+    // Don't notify for a session the user is currently looking at (either window's active tab)
+    const onScreen = onScreenTabIds(appState.projects, appState.activeProjectId).includes(sessionId);
+    if (prev === 'working' && (status === 'waiting' || status === 'completed' || status === 'input') && appState.preferences.soundOnSessionWaiting && !onScreen) {
       playNotificationSound();
     }
   });

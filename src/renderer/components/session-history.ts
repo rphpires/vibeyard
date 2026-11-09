@@ -3,6 +3,7 @@ import { loadProviderAvailability } from '../provider-availability.js';
 import { buildResumeWithProviderItems } from './resume-with-provider-menu.js';
 import { showConfirmDialog } from './modal.js';
 import type { ProviderId } from '../../shared/types.js';
+import { resumeAndReveal } from '../reveal.js';
 
 const MAX_VISIBLE = 50;
 const PROVIDER_LABELS: Record<string, string> = {
@@ -45,7 +46,7 @@ function showHistoryContextMenu(x: number, y: number, project: ProjectRecord, ar
     resumeItem.addEventListener('click', (e) => {
       e.stopPropagation();
       hideHistoryContextMenu();
-      void appState.resumeFromHistorySafe(project.id, archived.id);
+      void resumeAndReveal(project.id, archived.id);
     });
     menu.appendChild(resumeItem);
   }
@@ -234,7 +235,7 @@ function renderList(
     if (archived.cliSessionId) {
       item.style.cursor = 'pointer';
       item.addEventListener('click', () => {
-        void appState.resumeFromHistorySafe(project.id, archived.id);
+        void resumeAndReveal(project.id, archived.id);
       });
     }
     item.addEventListener('contextmenu', (e) => {

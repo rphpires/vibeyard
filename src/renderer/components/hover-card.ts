@@ -1,28 +1,38 @@
-let cardEl: HTMLDivElement | null = null;
+import { windowOf } from '../frame.js';
+
+// One card per document (the session window is a second Document). The card
+// lives in the document of the element it is anchored to.
+const cards = new WeakMap<Document, HTMLDivElement>();
+let activeDoc: Document | null = null;
 let escHandler: ((e: KeyboardEvent) => void) | null = null;
 let showTimer: ReturnType<typeof setTimeout> | null = null;
 const HOVER_DELAY_MS = 600;
 
-function ensureCard(): HTMLDivElement {
-  if (cardEl) return cardEl;
-  const el = document.createElement('div');
+function ensureCard(doc: Document): HTMLDivElement {
+  const existing = cards.get(doc);
+  if (existing) return existing;
+  const el = doc.createElement('div');
   el.className = 'hover-card hidden';
   el.setAttribute('role', 'tooltip');
-  document.body.appendChild(el);
-  cardEl = el;
+  doc.body.appendChild(el);
+  cards.set(doc, el);
   return el;
 }
 
 function show(target: HTMLElement, content: string): void {
-  const card = ensureCard();
+  const doc = target.ownerDocument;
+  const win = windowOf(doc);
+  if (activeDoc && activeDoc !== doc) hide();
+  activeDoc = doc;
+  const card = ensureCard(doc);
   card.textContent = content;
   card.classList.remove('hidden');
 
   const rect = target.getBoundingClientRect();
   const cardRect = card.getBoundingClientRect();
   const margin = 8;
-  const viewportW = window.innerWidth;
-  const viewportH = window.innerHeight;
+  const viewportW = win.innerWidth;
+  const viewportH = win.innerHeight;
 
   let top = rect.bottom + margin;
   let left = rect.left + rect.width / 2 - cardRect.width / 2;
@@ -41,7 +51,7 @@ function show(target: HTMLElement, content: string): void {
     escHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') hide();
     };
-    document.addEventListener('keydown', escHandler);
+    doc.addEventListener('keydown', escHandler);
   }
 }
 
@@ -50,11 +60,12 @@ function hide(): void {
     clearTimeout(showTimer);
     showTimer = null;
   }
-  if (cardEl) cardEl.classList.add('hidden');
-  if (escHandler) {
-    document.removeEventListener('keydown', escHandler);
-    escHandler = null;
+  if (activeDoc) {
+    cards.get(activeDoc)?.classList.add('hidden');
+    if (escHandler) activeDoc.removeEventListener('keydown', escHandler);
   }
+  escHandler = null;
+  activeDoc = null;
 }
 
 function scheduleShow(target: HTMLElement, content: string): void {

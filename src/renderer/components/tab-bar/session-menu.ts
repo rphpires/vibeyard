@@ -1,4 +1,4 @@
-import { appState, type SessionRecord } from '../../state.js';
+import { appState, type ProjectRecord, type SessionRecord } from '../../state.js';
 import type { ProviderId } from '../../../shared/types.js';
 import { showModal, closeModal, setModalError, FieldDef } from '../modal.js';
 import { findInvalidEnvLines } from '../../../shared/env-vars.js';
@@ -11,29 +11,45 @@ import { attachPathAutocomplete } from '../path-autocomplete.js';
 import { sshHostOptions } from '../../../shared/ssh-host.js';
 import { resolveRunLocation } from '../../run-location.js';
 import { basename } from '../../../shared/platform.js';
+import { viewProject, type TabBarView } from './views.js';
+import { viewOwnsLayout } from '../../session-window-state.js';
+import { focusIfInSessionWindow } from '../../reveal.js';
 
-export function quickNewSession(): void {
-  const project = appState.activeProject;
+/** The project with this id, or the active project when no id is given. */
+function projectById(projectId?: string): ProjectRecord | undefined {
+  return projectId ? appState.getProject(projectId) : appState.activeProject;
+}
+
+/**
+ * New session with default settings in `projectId` (default: the active project).
+ * `doc` is the document the action came from (default: the main window's): its
+ * focused element is released so the new pane can take focus, and a dialog opens there.
+ */
+export function quickNewSession(projectId?: string, doc: Document = document): void {
+  const project = projectById(projectId);
   if (!project) return;
   // The Temporary project has no folder of its own: every session needs one picked.
-  if (project.temporary) { void promptNewSession(); return; }
-  (document.activeElement as HTMLElement)?.blur?.();
-  appState.addSession(project.id, defaultSessionName(project));
+  if (project.temporary) { void promptNewSession(undefined, { projectId: project.id, doc }); return; }
+  (doc.activeElement as HTMLElement | null)?.blur?.();
+  focusIfInSessionWindow(project.id, appState.addSession(project.id, defaultSessionName(project)));
 }
 
 // "More" overflow menu. Deliberately excludes actions that have their own
 // toolbar icon (Terminal, Browser) and the New/Custom Session actions
-// (those live on the pill + its caret).
-export function showMoreMenu(x: number, y: number): void {
+// (those live on the pill + its caret). Opens in `view`'s document and acts on
+// its project; without a view, the main window and the active project.
+export function showMoreMenu(x: number, y: number, view?: TabBarView): void {
   hideTabContextMenu();
 
-  const menu = document.createElement('div');
+  const doc = view?.doc ?? document;
+  const project = view ? viewProject(view) : appState.activeProject;
+  const menu = doc.createElement('div');
   menu.className = 'tab-context-menu';
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
 
   const addItem = (label: string, onClick: () => void): void => {
-    const item = document.createElement('div');
+    const item = doc.createElement('div');
     item.className = 'tab-context-menu-item';
     item.textContent = label;
     item.addEventListener('click', (e) => {
@@ -45,19 +61,22 @@ export function showMoreMenu(x: number, y: number): void {
   };
 
   const addSeparator = (): void => {
-    const sep = document.createElement('div');
+    const sep = doc.createElement('div');
     sep.className = 'tab-context-menu-separator';
     menu.appendChild(sep);
   };
 
-  const swarmActive = appState.activeProject?.layout.mode === 'swarm';
-  addItem(swarmActive ? t('tab.moreMenu.swarmLayoutActive') : t('tab.moreMenu.swarmLayout'), () => appState.toggleSwarm());
-  addItem(t('tab.moreMenu.mcpInspector'), () => addMcpInspector());
+  // Same rule as the Swarm shortcut: no layout toggle in the detached project's main view.
+  if (!project || viewOwnsLayout(view?.kind ?? 'main', project.id)) {
+    const swarmActive = project?.layout.mode === 'swarm';
+    addItem(swarmActive ? t('tab.moreMenu.swarmLayoutActive') : t('tab.moreMenu.swarmLayout'), () => appState.toggleSwarm(project?.id));
+  }
+  addItem(t('tab.moreMenu.mcpInspector'), () => { if (project) addMcpInspector(project.id); });
 
   addSeparator();
-  addItem(t('tab.moreMenu.joinRemoteSession'), () => showJoinDialog());
+  addItem(t('tab.moreMenu.joinRemoteSession'), () => showJoinDialog({ projectId: project?.id, doc }));
 
-  document.body.appendChild(menu);
+  doc.body.appendChild(menu);
   setActiveContextMenu(menu);
 
   positionMenu(menu);
@@ -66,10 +85,21 @@ export function showMoreMenu(x: number, y: number): void {
 /** "Run on" value for "this project" (an SSH alias never contains brackets). '' = this computer, else an SSH host. */
 const RUN_ON_PROJECT = '[project]';
 
-export async function promptNewSession(onCreated?: (session: SessionRecord) => void): Promise<void> {
+export interface PromptNewSessionOptions {
+  /** Project the dialog offers as "This project". Default: the active project. */
+  projectId?: string;
+  /** Document to open the dialog in. Default: the main window's `document`. */
+  doc?: Document;
+}
+
+export async function promptNewSession(
+  onCreated?: (session: SessionRecord) => void,
+  opts: PromptNewSessionOptions = {},
+): Promise<void> {
+  const doc = opts.doc ?? document;
   // "This project" is offered only for a real project; the Temporary project
   // (or no project at all) only takes sessions with their own folder.
-  const active = appState.activeProject;
+  const active = projectById(opts.projectId);
   const project = active && !active.temporary ? active : undefined;
 
   const sessionNum = active ? nextSessionNumber(active) : 1;
@@ -91,7 +121,8 @@ export async function promptNewSession(onCreated?: (session: SessionRecord) => v
   const isProject = (value: string) => value === RUN_ON_PROJECT;
   const hostOf = (value: string) => (isProject(value) ? '' : value);
   let refreshPathSuggestions: () => void = () => {};
-  const pathInput = () => document.getElementById('modal-run-path') as HTMLInputElement | null;
+  // The dialog's fields live in the dialog's document, not necessarily the main one.
+  const pathInput = () => doc.getElementById('modal-run-path') as HTMLInputElement | null;
   const defaultName = t('tab.newSessionModal.namePlaceholder', { num: sessionNum });
 
   const preferred = appState.preferences.defaultProvider ?? 'claude';
@@ -101,13 +132,13 @@ export async function promptNewSession(onCreated?: (session: SessionRecord) => v
   // Profiles only apply to Claude, and only locally: they relocate the *local*
   // CLAUDE_CONFIG_DIR, while a remote session uses the host's own login.
   const syncProfileField = () => {
-    if (claudeProfiles.length > 0) setFieldVisible('profile', selectedProvider === 'claude' && !hostOf(runOn));
+    if (claudeProfiles.length > 0) setFieldVisible(doc, 'profile', selectedProvider === 'claude' && !hostOf(runOn));
   };
   // Folder only for a temporary session; "keep for future sessions" only for a project.
   const syncRunOnFields = () => {
-    setFieldVisible('run-path', !isProject(runOn));
-    setFieldVisible('keep-args', isProject(runOn));
-    setFieldVisible('keep-env', isProject(runOn));
+    setFieldVisible(doc, 'run-path', !isProject(runOn));
+    setFieldVisible(doc, 'keep-args', isProject(runOn));
+    setFieldVisible(doc, 'keep-env', isProject(runOn));
     syncProfileField();
   };
 
@@ -227,6 +258,7 @@ export async function promptNewSession(onCreated?: (session: SessionRecord) => v
       project.defaultArgs = values['keep-args'] === 'true' ? (args || undefined) : undefined;
       project.defaultEnv = values['keep-env'] === 'true' ? (envVars || undefined) : undefined;
       const session = appState.addSession(project.id, name, args, providerId, profileId, envVars);
+      focusIfInSessionWindow(project.id, session);
       if (session && onCreated) onCreated(session);
       return;
     }
@@ -244,7 +276,7 @@ export async function promptNewSession(onCreated?: (session: SessionRecord) => v
     closeModal();
     const session = appState.addTemporarySession(name, location, args, providerId, envVars, profileId);
     if (session && onCreated) onCreated(session);
-  });
+  }, opts.doc ? { doc: opts.doc } : undefined);
 
   syncRunOnFields();
   // Folder: local or remote autocomplete, following the "Run on" choice.
@@ -252,16 +284,17 @@ export async function promptNewSession(onCreated?: (session: SessionRecord) => v
   if (input) refreshPathSuggestions = attachPathAutocomplete(input, { getHost: () => hostOf(runOn) }).refresh;
 }
 
-/** Toggle a field's wrapper in the open modal by field id. */
-function setFieldVisible(id: string, visible: boolean): void {
-  const wrapper = document.getElementById(`modal-${id}`)?.closest('.modal-field') as HTMLElement | null;
+/** Toggle a field's wrapper in the open modal (in `doc`) by field id. */
+function setFieldVisible(doc: Document, id: string, visible: boolean): void {
+  const wrapper = doc.getElementById(`modal-${id}`)?.closest('.modal-field') as HTMLElement | null;
   if (wrapper) wrapper.style.display = visible ? '' : 'none';
 }
 
-function addMcpInspector(): void {
-  const project = appState.activeProject;
+function addMcpInspector(projectId?: string): void {
+  const project = projectById(projectId);
   if (!project) return;
 
   const inspectorNum = nextNumberFor(MCP_INSPECTOR_NAME_KEY, project);
-  appState.addMcpInspectorSession(project.id, t('tab.newMcpInspector.defaultName', { num: inspectorNum }));
+  const session = appState.addMcpInspectorSession(project.id, t('tab.newMcpInspector.defaultName', { num: inspectorNum }));
+  focusIfInSessionWindow(project.id, session);
 }

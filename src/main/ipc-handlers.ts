@@ -1,4 +1,6 @@
 import { ipcMain, BrowserWindow, app, dialog, shell, clipboard } from 'electron';
+import { getMainWindow, getSessionWindow, raiseWindow } from './windows';
+import { rememberSessionWindowZoom } from './session-window';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -32,6 +34,7 @@ import { isGhAvailable, listPullRequests, listIssues, detectRepo } from './githu
 import { expandUserPath, isBinaryBuffer, isLikelyBinaryFile, isMacPackagePath, BINARY_SNIFF_BYTES } from './fs-utils';
 import { isLinux, isMac, isWin } from './platform';
 import { listProfiles as listChromeProfiles, runImport as runChromeImport, clearImportedCookies, getCookieCount } from './chrome-import/importer';
+import { clampZoom } from '../shared/types';
 import type { ChromeImportOptions, ChromeImportProgress, ClipboardSource } from '../shared/types';
 import { shouldWarnStatusLine } from './settings-guard';
 import { buildVibeyardignoreMatcher } from './vibeyardignore';
@@ -156,7 +159,7 @@ export function resetHookWatcher(): void {
 
 export function registerIpcHandlers(): void {
   ipcMain.handle('pty:create', async (_event, sessionId: string, cwd: string, cliSessionId: string | null, isResume: boolean, extraArgs: string, providerId: ProviderId = 'claude', initialPrompt?: string, systemPrompt?: string, envVars: string = '', configDir?: string, cliName?: string, remoteHost?: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
 
     // Start hook status watcher on first PTY creation (window is guaranteed to exist)
@@ -184,8 +187,8 @@ export function registerIpcHandlers(): void {
       systemPrompt,
       envVars,
       (data) => {
-        const w = BrowserWindow.getAllWindows()[0];
-        if (w && !w.isDestroyed()) {
+        const w = getMainWindow();
+        if (w) {
           w.webContents.send('pty:data', sessionId, data);
         }
       },
@@ -193,8 +196,8 @@ export function registerIpcHandlers(): void {
         cleanupSessionStatus(sessionId);
         unregisterCodexSession(sessionId);
         if (isSilencedExit(sessionId)) return; // old PTY killed for re-spawn
-        const w = BrowserWindow.getAllWindows()[0];
-        if (w && !w.isDestroyed()) {
+        const w = getMainWindow();
+        if (w) {
           w.webContents.send('pty:exit', sessionId, exitCode, signal);
         }
       },
@@ -236,21 +239,21 @@ export function registerIpcHandlers(): void {
     listRemoteDirEntries(host, Array.isArray(dirs) ? dirs.filter((d): d is string => typeof d === 'string') : []));
 
   ipcMain.handle('pty:createShell', (_event, sessionId: string, cwd: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
 
     spawnShellPty(
       sessionId,
       cwd,
       (data) => {
-        const w = BrowserWindow.getAllWindows()[0];
-        if (w && !w.isDestroyed()) {
+        const w = getMainWindow();
+        if (w) {
           w.webContents.send('pty:data', sessionId, data);
         }
       },
       (exitCode, signal) => {
-        const w = BrowserWindow.getAllWindows()[0];
-        if (w && !w.isDestroyed()) {
+        const w = getMainWindow();
+        if (w) {
           w.webContents.send('pty:exit', sessionId, exitCode, signal);
         }
       }
@@ -358,7 +361,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.on('config:watchProject', (_event, providerId: ProviderId, projectPath: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
     const provider = getProvider(providerId);
     provider.startConfigWatcher?.(win, projectPath);
@@ -449,7 +452,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('fs:browseDirectory', async () => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = BrowserWindow.getFocusedWindow() ?? getMainWindow();
     if (!win) return null;
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
     if (result.canceled || result.filePaths.length === 0) return null;
@@ -461,17 +464,35 @@ export function registerIpcHandlers(): void {
   // "Auto-name sessions" back on would leave existing tabs unnamed until their
   // title happened to change.
   ipcMain.on('session:resyncStatus', () => {
-    const w = BrowserWindow.getAllWindows()[0];
+    const w = getMainWindow();
     if (w) resyncAllSessions(w);
+  });
+
+  ipcMain.on('sessionWindow:focus', () => {
+    const win = getSessionWindow();
+    if (win) raiseWindow(win, { show: true, moveTop: true });
+  });
+
+  ipcMain.on('sessionWindow:close', () => {
+    getSessionWindow()?.close();
+  });
+
+  ipcMain.on('sessionWindow:setZoom', (_event, factor: unknown) => {
+    if (typeof factor !== 'number' || !Number.isFinite(factor)) return;
+    const clamped = clampZoom(factor);
+    // Remembered even with no sessions window: the next one opens at it.
+    rememberSessionWindowZoom(clamped);
+    getSessionWindow()?.webContents.setZoomFactor(clamped);
+  });
+
+  ipcMain.on('sessionWindow:setTitle', (_event, title: unknown) => {
+    if (typeof title === 'string') getSessionWindow()?.setTitle(title);
   });
 
   ipcMain.on('app:focus', () => {
     app.focus({ steal: true });
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win && !win.isDestroyed()) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    const win = getMainWindow();
+    if (win) raiseWindow(win);
   });
 
   ipcMain.on('app:closeConfirmed', () => {
@@ -616,7 +637,7 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.on('git:watchProject', (_event, projectPath: string) => {
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = getMainWindow();
     if (!win) return;
     startGitWatcher(win, projectPath);
   });
@@ -903,8 +924,8 @@ export function registerIpcHandlers(): void {
     commandsDir: CTL_COMMANDS_DIR,
     resolveToken: resolveCtlToken,
     dispatch: (reqId, callerId, command) => {
-      const w = BrowserWindow.getAllWindows()[0];
-      if (w && !w.isDestroyed()) w.webContents.send('ctl:command', reqId, callerId, command);
+      const w = getMainWindow();
+      if (w) w.webContents.send('ctl:command', reqId, callerId, command);
     },
   });
   ipcMain.on('ctl:setEnabled', (_event, enabled: boolean) => {

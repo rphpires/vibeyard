@@ -197,8 +197,9 @@ export function renderBoard(target?: HTMLElement): void {
   initBoardDnd();
 }
 
-export function hideBoardView(): void {
-  if (boardEl) {
+/** Hide the board, unless `within` is given and the board is not inside it. */
+export function hideBoardView(within?: HTMLElement): void {
+  if (boardEl && (!within || within.contains(boardEl))) {
     boardEl.style.display = 'none';
   }
 }

@@ -119,3 +119,22 @@ describe('flushState', () => {
   });
 });
 
+describe('in-memory reads for the sessions window (no disk read)', () => {
+  it('currentState returns the latest saved state, not the lagging file', async () => {
+    const { currentState } = await import('./store');
+    const fresh = { ...DEFAULT_STATE, preferences: { ...DEFAULT_STATE.preferences, zoomFactor: 1.5 } };
+    saveState(fresh);
+    mockReadFileSync.mockClear();
+    expect(currentState().preferences?.zoomFactor).toBe(1.5);
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+  });
+
+  it('knownSessionWindowBounds returns the bounds main last saved, without reading the file', async () => {
+    const { knownSessionWindowBounds, saveSessionWindowBounds } = await import('./store');
+    saveSessionWindowBounds({ x: 1, y: 2, width: 300, height: 400 });
+    mockReadFileSync.mockClear();
+    expect(knownSessionWindowBounds()).toEqual({ x: 1, y: 2, width: 300, height: 400 });
+    expect(mockReadFileSync).not.toHaveBeenCalled();
+  });
+});
+

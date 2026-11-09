@@ -4,13 +4,24 @@ const addFileReaderSession = vi.fn();
 const exists = vi.fn();
 const isDirectory = vi.fn();
 let activeProject: { id: string; path: string } | null = { id: 'p1', path: '/repo' };
+// B: detached into the sessions window while main shows p1.
+const detached = { id: 'B', path: '/b' };
+let detachedId: string | null = null;
+const focusSessionWindow = vi.fn();
 
 vi.mock('./state.js', () => ({
   appState: {
     get activeProject() { return activeProject; },
+    getProject(id: string | null | undefined) { return id ? this.projects.find((p: { id: string }) => p.id === id) : undefined; },
+    get projects() { return [activeProject, detached].filter(Boolean); },
     addFileReaderSession,
   },
 }));
+vi.mock('./session-window-state.js', () => ({
+  getDetachedProjectId: () => detachedId,
+  viewShowsSession: (kind: string, projectId: string) => (kind === 'sessions') === (projectId === detachedId),
+}));
+vi.mock('./session-window-handle.js', () => ({ focusSessionWindow }));
 
 const { openFileReaderChecked } = await import('./open-file-reader.js');
 
@@ -19,6 +30,8 @@ beforeEach(() => {
   exists.mockResolvedValue(true);
   isDirectory.mockResolvedValue(false);
   activeProject = { id: 'p1', path: '/repo' };
+  detachedId = null;
+  addFileReaderSession.mockImplementation((projectId: string, p: string) => ({ id: 'new', type: 'file-reader', fileReaderPath: p }));
   (globalThis as unknown as { window: { vibeyard: unknown } }).window = {
     vibeyard: { fs: { exists, isDirectory } },
   } as never;
@@ -76,5 +89,28 @@ describe('openFileReaderChecked', () => {
     activeProject = null;
     await openFileReaderChecked('p1', 'src/foo.ts');
     expect(addFileReaderSession).not.toHaveBeenCalled();
+  });
+
+  describe('with B detached into the sessions window (main shows p1)', () => {
+    beforeEach(() => { detachedId = 'B'; });
+
+    it('opens a path cmd+clicked in a sessions-window terminal, in B, and brings that window forward', async () => {
+      await openFileReaderChecked('B', 'src/foo.ts', 3);
+      expect(exists).toHaveBeenCalledWith('/b/src/foo.ts');
+      expect(addFileReaderSession).toHaveBeenCalledWith('B', '/b/src/foo.ts', 3);
+      expect(focusSessionWindow).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not focus the sessions window for a tab of the main project', async () => {
+      await openFileReaderChecked('p1', 'src/foo.ts');
+      expect(addFileReaderSession).toHaveBeenCalledWith('p1', '/repo/src/foo.ts', undefined);
+      expect(focusSessionWindow).not.toHaveBeenCalled();
+    });
+
+    it('drops the open when B was brought back mid-lookup', async () => {
+      exists.mockImplementation(async () => { detachedId = null; return true; });
+      await openFileReaderChecked('B', 'src/foo.ts');
+      expect(addFileReaderSession).not.toHaveBeenCalled();
+    });
   });
 });

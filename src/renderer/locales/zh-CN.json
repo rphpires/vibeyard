@@ -32,6 +32,7 @@
     "sessionHistory": "会话历史",
     "discussions": "讨论",
     "activeSessions": "活动会话",
+    "sessionWindow": "独立会话窗口按钮",
     "activeSessionStatuses": "活动会话状态",
     "board": "看板",
     "showMetricsOnCards": "在卡片上显示指标"
@@ -47,6 +48,7 @@
     "team": "团队",
     "files": "文件",
     "git": "Git",
+    "detachSessions": "在独立窗口中打开会话",
     "newProject": {
       "title": "新建项目",
       "nameLabel": "名称",
@@ -536,5 +538,11 @@
     "about": "关于",
     "general": "通用",
     "appearance": "外观"
+  },
+  "sessionWindow": {
+    "returnToMain": "返回主窗口",
+    "placeholder": "此项目的会话已在另一个窗口中打开",
+    "show": "显示",
+    "bringBack": "移回"
   }
 }
