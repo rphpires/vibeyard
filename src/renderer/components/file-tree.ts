@@ -5,21 +5,117 @@ import { showContextMenu, MenuOption } from './board/board-context-menu.js';
 import { showConfirmModal, showPropertiesDialog } from './modal.js';
 import { FILE_PATH_DRAG_TYPE } from '../drag-types.js';
 import { estimateTokens, TOKEN_COUNT_MAX_CHARS } from '../../shared/token-estimate.js';
-import { isPathUnder } from '../../shared/platform.js';
+import { dirname, isPathUnder } from '../../shared/platform.js';
+import { projectFolderLocation } from '../../shared/project-folder.js';
+import type { DirEntry } from '../../shared/types.js';
 import { isMac, isWin } from '../platform.js';
 
-export interface DirEntry {
-  name: string;
-  path: string;
-  isDirectory: boolean;
+export type { DirEntry };
+
+/** A listing that could not be read (a remote dir over a failed ssh call). */
+type Listing = DirEntry[] | null;
+
+interface EntryCache {
+  entries: Map<string, DirEntry[]>;
+  inflight: Map<string, Promise<Listing>>;
+  /** Dirs whose last listing failed: not retried by re-renders, only by the poll or an expand. */
+  failed: Set<string>;
+}
+
+function newCache(): EntryCache {
+  return { entries: new Map(), inflight: new Map(), failed: new Set() };
+}
+
+/**
+ * Where a tree's folders live, chosen once per tree. Every place the local
+ * disk and an SSH host differ (listing, watching, row actions) asks this, so
+ * shared tree code never branches on the location itself.
+ */
+interface TreeBackend {
+  /** SSH host of a remote project; undefined for the local disk. */
+  readonly host?: string;
+  /** Listings; per remote project (its own poll keeps it fresh), shared locally (the fs watcher does). */
+  readonly cache: EntryCache;
+  /** List each dir: one `fs.listDir` each locally, one ssh call for all of them remotely. */
+  list(dirs: string[]): Promise<Record<string, Listing>>;
+  watch(dir: string): void;
+  unwatch(dir: string): void;
+  /** What clicking a file does; undefined when it cannot be opened here. */
+  openFile?(projectId: string, entry: DirEntry): void;
+  menu(projectId: string, entry: DirEntry): MenuOption[];
+}
+
+const localBackend: TreeBackend = {
+  cache: newCache(),
+  async list(dirs) {
+    const lists = await Promise.all(dirs.map((d) => window.vibeyard.fs.listDir(d).catch(() => [])));
+    return Object.fromEntries(dirs.map((d, i) => [d, lists[i]]));
+  },
+  watch: (dir) => window.vibeyard.fs.watchDir(dir),
+  unwatch: (dir) => window.vibeyard.fs.unwatchDir(dir),
+  openFile: (projectId, entry) => { void openFileReaderChecked(projectId, entry.path); },
+  menu: (projectId, entry) => entry.isDirectory
+    ? [showInFolderMenuOption(entry), deleteMenuOption(entry)]
+    : [
+        {
+          label: 'Open in Browser',
+          action: () => { appState.addBrowserTabSession(projectId, pathToFileURL(entry.path)); },
+        },
+        showInFolderMenuOption(entry),
+        { label: 'Properties', action: () => { showFileProperties(entry); } },
+        deleteMenuOption(entry),
+      ],
+};
+
+/**
+ * A remote project's folders live on its host: rows can be dragged into a
+ * session (the path is valid there) or have their path copied, but not
+ * opened, revealed, inspected or trashed through the local filesystem.
+ * There is no watcher on the host; the project's poll re-lists watched dirs.
+ */
+function sshBackend(host: string): TreeBackend {
+  return {
+    host,
+    cache: newCache(),
+    list: (dirs) => window.vibeyard.remote.listDirEntries(host, dirs)
+      .catch(() => Object.fromEntries(dirs.map((d) => [d, null]))),
+    watch: () => {},
+    unwatch: () => {},
+    menu: (_projectId, entry) => [copyPathMenuOption(entry)],
+  };
 }
 
 const expandedFolders = new Map<string, Set<string>>();
-const entryCache = new Map<string, DirEntry[]>();
-const inflight = new Map<string, Promise<DirEntry[]>>();
 const watchedByProject = new Map<string, Set<string>>();
-const activeTrees = new Map<string, { project: ProjectRecord; container: HTMLElement }>();
 let unsubFileChanged: (() => void) | null = null;
+
+/**
+ * One rendered tree. Its backend is fixed when the tree is rendered and
+ * carried by everything the render starts, so a listing that resolves after
+ * the tree was closed or re-rendered can never fall back to another location;
+ * such stale work checks `isLive` and stops.
+ */
+interface Tree {
+  project: ProjectRecord;
+  container: HTMLElement;
+  backend: TreeBackend;
+}
+const activeTrees = new Map<string, Tree>();
+/** Remote backends outlive re-renders (their cache is what saves an ssh call); dropped on close. */
+const remoteBackends = new Map<string, TreeBackend>();
+
+function isLive(tree: Tree): boolean {
+  return activeTrees.get(tree.project.id) === tree;
+}
+
+/**
+ * How often an open remote tree re-lists its watched folders. There is no file
+ * watcher on the host, so polling (one ssh call covering every watched folder)
+ * is what keeps it live, like the local tree's watcher. Each poll is a fresh
+ * ssh login (Windows OpenSSH has no connection sharing), hence 10 s.
+ */
+export const REMOTE_POLL_MS = 10_000;
+const remotePolls = new Map<string, ReturnType<typeof setTimeout>>();
 
 function getWatchedSet(projectId: string): Set<string> {
   let set = watchedByProject.get(projectId);
@@ -30,11 +126,67 @@ function getWatchedSet(projectId: string): Set<string> {
   return set;
 }
 
-function watchFolder(projectId: string, folderPath: string): void {
-  const set = getWatchedSet(projectId);
+function watchFolder(tree: Tree, folderPath: string): void {
+  const set = getWatchedSet(tree.project.id);
   if (set.has(folderPath)) return;
   set.add(folderPath);
-  window.vibeyard.fs.watchDir(folderPath);
+  tree.backend.watch(folderPath);
+}
+
+/** Schedule the next poll. Self-rescheduling, so two polls never overlap. */
+function scheduleRemotePoll(projectId: string): void {
+  if (remotePolls.has(projectId)) return;
+  remotePolls.set(projectId, setTimeout(() => { void pollRemoteTree(projectId); }, REMOTE_POLL_MS));
+}
+
+function stopRemotePoll(projectId: string): void {
+  const timer = remotePolls.get(projectId);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  remotePolls.delete(projectId);
+}
+
+function sameListing(a: DirEntry[] | undefined, b: DirEntry[]): boolean {
+  if (!a || a.length !== b.length) return false;
+  return a.every((e, i) => e.path === b[i].path && e.isDirectory === b[i].isDirectory);
+}
+
+/**
+ * Re-list every watched folder of a remote tree in one ssh call; patch the
+ * ones that changed. The fired timer stays registered while the call runs, so
+ * a re-render meanwhile cannot schedule a second, overlapping poll.
+ */
+async function pollRemoteTree(projectId: string): Promise<void> {
+  const self = remotePolls.get(projectId);
+  const tree = activeTrees.get(projectId);
+  // The sidebar only renders the active project's panel: a tree left behind by
+  // a project switch is detached. Stop polling it; the next render restarts.
+  if (tree?.backend.host && tree.container.isConnected) {
+    const dirs = [...(watchedByProject.get(projectId) ?? [])];
+    if (dirs.length > 0 && !document.hidden) await refreshRemoteDirs(tree, dirs);
+  }
+  if (remotePolls.get(projectId) !== self) return; // stopped (closed) meanwhile
+  remotePolls.delete(projectId);
+  const now = activeTrees.get(projectId);
+  if (now && now.backend === tree?.backend && now.container.isConnected) scheduleRemotePoll(projectId);
+}
+
+async function refreshRemoteDirs(tree: Tree, dirs: string[]): Promise<void> {
+  const projectId = tree.project.id;
+  const { backend } = tree;
+  const result = await backend.list(dirs);
+  // A re-render keeps the same backend; a close or host change drops it.
+  const now = activeTrees.get(projectId);
+  if (!now || now.backend !== backend) return;
+  for (const dir of dirs) {
+    const listed = result[dir];
+    if (!listed || !watchedByProject.get(projectId)?.has(dir)) continue;
+    const sorted = sortEntries(listed);
+    backend.cache.failed.delete(dir);
+    if (sameListing(backend.cache.entries.get(dir), sorted)) continue;
+    backend.cache.entries.set(dir, sorted);
+    reconcileDir(now, dir);
+  }
 }
 
 /**
@@ -42,17 +194,19 @@ function watchFolder(projectId: string, folderPath: string): void {
  * drop their cached listings. Used on collapse (keeps expansion state so a
  * re-expand restores the subtree) and on deletion (`clearExpanded`).
  */
-function unwatchSubtree(projectId: string, folderPath: string, clearExpanded = false): void {
+function unwatchSubtree(tree: Tree, folderPath: string, clearExpanded = false): void {
+  const projectId = tree.project.id;
   const set = watchedByProject.get(projectId);
   if (set) {
     for (const p of [...set]) {
       if (!isPathUnder(p, folderPath)) continue;
       set.delete(p);
-      window.vibeyard.fs.unwatchDir(p);
+      tree.backend.unwatch(p);
     }
   }
-  for (const p of [...entryCache.keys()]) {
-    if (isPathUnder(p, folderPath)) entryCache.delete(p);
+  const { entries } = tree.backend.cache;
+  for (const p of [...entries.keys()]) {
+    if (isPathUnder(p, folderPath)) entries.delete(p);
   }
   if (clearExpanded) {
     const exp = expandedFolders.get(projectId);
@@ -77,21 +231,26 @@ function flushPendingDirs(): void {
   const dirs = [...pendingDirs];
   pendingDirs.clear();
   for (const dir of dirs) {
-    entryCache.delete(dir);
-    inflight.delete(dir);
+    localBackend.cache.entries.delete(dir);
+    localBackend.cache.inflight.delete(dir);
     for (const [projectId, paths] of watchedByProject) {
-      if (!paths.has(dir)) continue;
-      const reg = activeTrees.get(projectId);
-      if (!reg) continue;
-      const selector = `[data-folder-path="${CSS.escape(dir)}"]`;
-      const target = reg.container.matches(selector)
-        ? reg.container
-        : reg.container.querySelector(selector);
-      if (target instanceof HTMLElement) {
-        const depth = Number(target.dataset.depth ?? '0');
-        reconcileChildren(projectId, dir, depth, target);
-      }
+      const tree = activeTrees.get(projectId);
+      // Local fs events say nothing about another backend's paths.
+      if (tree?.backend !== localBackend || !paths.has(dir)) continue;
+      reconcileDir(tree, dir);
     }
+  }
+}
+
+/** Reconcile the rendered children of `dir` in a tree against the cache (or a fresh listing). */
+function reconcileDir(tree: Tree, dir: string): void {
+  const selector = `[data-folder-path="${CSS.escape(dir)}"]`;
+  const target = tree.container.matches(selector)
+    ? tree.container
+    : tree.container.querySelector(selector);
+  if (target instanceof HTMLElement) {
+    const depth = Number(target.dataset.depth ?? '0');
+    void reconcileChildren(tree, dir, depth, target);
   }
 }
 
@@ -116,10 +275,24 @@ function getExpandedSet(projectId: string): Set<string> {
   return set;
 }
 
+/** Expanded folders under `root` that are actually shown: every ancestor up to `root` is expanded too. */
+function visibleExpanded(projectId: string, root: string): string[] {
+  const exp = getExpandedSet(projectId);
+  const shown = (p: string): boolean => {
+    for (let dir = dirname(p); dir !== root; dir = dirname(dir)) {
+      if (!exp.has(dir) || !isPathUnder(dir, root)) return false;
+    }
+    return true;
+  };
+  return [...exp].filter((p) => p !== root && isPathUnder(p, root) && shown(p));
+}
+
+const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base' });
+
 export function sortEntries(entries: DirEntry[]): DirEntry[] {
   return [...entries].sort((a, b) => {
     if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    return nameCollator.compare(a.name, b.name);
   });
 }
 
@@ -143,18 +316,24 @@ export function clearProjectState(projectId: string): void {
 }
 
 export function closeFileTree(projectId: string): void {
+  const tree = activeTrees.get(projectId);
   const watched = watchedByProject.get(projectId);
   if (watched) {
-    for (const p of watched) window.vibeyard.fs.unwatchDir(p);
+    if (tree) for (const p of watched) tree.backend.unwatch(p);
     watched.clear();
   }
+  stopRemotePoll(projectId);
+  // A remote listing is only kept fresh while its tree polls; reopening re-lists.
+  remoteBackends.delete(projectId);
   activeTrees.delete(projectId);
 }
 
 /** @internal Test-only: clear the module-level entry cache. */
 export function _resetForTesting(): void {
-  entryCache.clear();
-  inflight.clear();
+  localBackend.cache.entries.clear();
+  localBackend.cache.inflight.clear();
+  remoteBackends.clear();
+  for (const id of [...remotePolls.keys()]) stopRemotePoll(id);
   expandedFolders.clear();
   watchedByProject.clear();
   activeTrees.clear();
@@ -166,23 +345,40 @@ export function _resetForTesting(): void {
   }
 }
 
-async function loadEntries(folderPath: string): Promise<DirEntry[]> {
-  const cached = entryCache.get(folderPath);
-  if (cached) return cached;
-  const pending = inflight.get(folderPath);
-  if (pending) return pending;
+/** Start listing each of `dirs` that is neither cached, loading, nor known to fail, in one backend call. */
+function startLoads(tree: Tree, dirs: string[]): void {
+  const { cache } = tree.backend;
+  const todo = dirs.filter((d) => !cache.entries.has(d) && !cache.inflight.has(d) && !cache.failed.has(d));
+  if (todo.length === 0) return;
+  const batch = tree.backend.list(todo);
+  for (const dir of todo) {
+    const promise: Promise<Listing> = batch.then((result) => {
+      // Superseded when an fs event dropped this load and started a fresh one.
+      const current = cache.inflight.get(dir) === promise;
+      if (current) cache.inflight.delete(dir);
+      // A poll that finished first holds a newer listing: keep it.
+      const newer = cache.entries.get(dir);
+      if (newer) return newer;
+      const entries = result[dir] ?? null;
+      if (entries === null) {
+        if (current) cache.failed.add(dir);
+        return null;
+      }
+      const sorted = sortEntries(entries);
+      if (current) cache.entries.set(dir, sorted);
+      return sorted;
+    });
+    cache.inflight.set(dir, promise);
+  }
+}
 
-  const promise = window.vibeyard.fs.listDir(folderPath).then((entries) => {
-    const sorted = sortEntries(entries);
-    entryCache.set(folderPath, sorted);
-    inflight.delete(folderPath);
-    return sorted;
-  }).catch(() => {
-    inflight.delete(folderPath);
-    return [] as DirEntry[];
-  });
-  inflight.set(folderPath, promise);
-  return promise;
+async function loadEntries(tree: Tree, folderPath: string): Promise<Listing> {
+  const { cache } = tree.backend;
+  const cached = cache.entries.get(folderPath);
+  if (cached) return cached;
+  if (cache.failed.has(folderPath)) return null;
+  startLoads(tree, [folderPath]);
+  return cache.inflight.get(folderPath)!;
 }
 
 function makeRow(depth: number, entry: DirEntry, projectId: string): HTMLElement {
@@ -214,11 +410,11 @@ function makeRow(depth: number, entry: DirEntry, projectId: string): HTMLElement
   return row;
 }
 
-function appendEmpty(container: HTMLElement, depth: number): void {
+function appendEmpty(container: HTMLElement, depth: number, text = '(empty)'): void {
   const empty = document.createElement('div');
   empty.className = 'file-tree-empty';
   empty.style.paddingLeft = `${20 + depth * 14}px`;
-  empty.textContent = '(empty)';
+  empty.textContent = text;
   container.appendChild(empty);
 }
 
@@ -228,16 +424,23 @@ function appendEmpty(container: HTMLElement, depth: number): void {
  * reconciler can locate it; a directory row's subcontainer is always its
  * immediate next sibling.
  */
-function createEntry(projectId: string, depth: number, entry: DirEntry): HTMLElement[] {
+function createEntry(tree: Tree, depth: number, entry: DirEntry): HTMLElement[] {
+  const projectId = tree.project.id;
+  const { backend } = tree;
   const row = makeRow(depth, entry, projectId);
   row.dataset.entryPath = entry.path;
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showContextMenu(e.clientX, e.clientY, backend.menu(projectId, entry));
+  });
 
   if (entry.isDirectory) {
     const subContainer = document.createElement('div');
     subContainer.className = 'file-tree-children';
 
     if (isExpanded(projectId, entry.path)) {
-      renderChildren(projectId, entry.path, depth + 1, subContainer);
+      void renderChildren(tree, entry.path, depth + 1, subContainer);
     }
 
     row.addEventListener('click', (e) => {
@@ -245,16 +448,15 @@ function createEntry(projectId: string, depth: number, entry: DirEntry): HTMLEle
       const nowExpanded = toggleFolder(projectId, entry.path);
       row.querySelector('.file-tree-chevron')!.classList.toggle('expanded', nowExpanded);
       if (nowExpanded) {
-        renderChildren(projectId, entry.path, depth + 1, subContainer);
+        // An explicit expand retries a folder that failed to list, and loads
+        // its remembered-expanded subfolders with it in one backend call.
+        backend.cache.failed.delete(entry.path);
+        startLoads(tree, [entry.path, ...visibleExpanded(projectId, entry.path)]);
+        void renderChildren(tree, entry.path, depth + 1, subContainer);
       } else {
-        unwatchSubtree(projectId, entry.path);
+        unwatchSubtree(tree, entry.path);
         subContainer.innerHTML = '';
       }
-    });
-    row.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showContextMenu(e.clientX, e.clientY, [showInFolderMenuOption(entry), deleteMenuOption(entry)]);
     });
     return [row, subContainer];
   }
@@ -268,49 +470,42 @@ function createEntry(projectId: string, depth: number, entry: DirEntry): HTMLEle
   });
   row.addEventListener('click', (e) => {
     e.stopPropagation();
-    void openFileReaderChecked(projectId, entry.path);
-  });
-  row.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    showContextMenu(e.clientX, e.clientY, [
-      {
-        label: 'Open in Browser',
-        action: () => {
-          appState.addBrowserTabSession(projectId, pathToFileURL(entry.path));
-        },
-      },
-      showInFolderMenuOption(entry),
-      {
-        label: 'Properties',
-        action: () => { showFileProperties(entry); },
-      },
-      deleteMenuOption(entry),
-    ]);
+    backend.openFile?.(projectId, entry);
   });
   return [row];
 }
 
 /** Full (re)build of a folder's children. Used for initial render and expand. */
 async function renderChildren(
-  projectId: string,
+  tree: Tree,
   folderPath: string,
   depth: number,
   container: HTMLElement
 ): Promise<void> {
   container.dataset.folderPath = folderPath;
   container.dataset.depth = String(depth);
-  watchFolder(projectId, folderPath);
-  const entries = await loadEntries(folderPath);
+  watchFolder(tree, folderPath);
+  // An ssh listing takes a moment; say so instead of showing a blank folder.
+  if (tree.backend.host && !tree.backend.cache.entries.has(folderPath)) {
+    container.innerHTML = '';
+    appendEmpty(container, depth, 'Loading…');
+  }
+  const entries = await loadEntries(tree, folderPath);
+  // Closed or re-rendered meanwhile: this container is no longer on screen.
+  if (!isLive(tree)) return;
   container.innerHTML = '';
 
+  if (entries === null) {
+    appendEmpty(container, depth, '(could not list over SSH)');
+    return;
+  }
   if (entries.length === 0) {
     appendEmpty(container, depth);
     return;
   }
 
   for (const entry of entries) {
-    for (const node of createEntry(projectId, depth, entry)) container.appendChild(node);
+    for (const node of createEntry(tree, depth, entry)) container.appendChild(node);
   }
 }
 
@@ -322,12 +517,15 @@ async function renderChildren(
  * than rebuilding, which is what makes live agent edits feel smooth.
  */
 async function reconcileChildren(
-  projectId: string,
+  tree: Tree,
   folderPath: string,
   depth: number,
   container: HTMLElement
 ): Promise<void> {
-  const entries = await loadEntries(folderPath);
+  const entries = await loadEntries(tree, folderPath);
+  if (!isLive(tree)) return;
+  // Keep what is on screen when a listing fails; the next poll retries.
+  if (entries === null) return;
   const newByPath = new Map(entries.map((e) => [e.path, e] as const));
 
   // Index the rows currently rendered in this container (rows only; their
@@ -341,7 +539,7 @@ async function reconcileChildren(
 
   if (entries.length === 0) {
     for (const [p, row] of existing) {
-      if (row.classList.contains('is-dir')) unwatchSubtree(projectId, p, true);
+      if (row.classList.contains('is-dir')) unwatchSubtree(tree, p, true);
     }
     container.innerHTML = '';
     appendEmpty(container, depth);
@@ -358,7 +556,7 @@ async function reconcileChildren(
     if (kindMatches) continue;
     const isDir = row.classList.contains('is-dir');
     const sub = isDir ? row.nextElementSibling : null;
-    if (isDir) unwatchSubtree(projectId, p, true);
+    if (isDir) unwatchSubtree(tree, p, true);
     row.remove();
     if (sub instanceof HTMLElement && sub.classList.contains('file-tree-children')) sub.remove();
     existing.delete(p);
@@ -378,7 +576,7 @@ async function reconcileChildren(
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (existing.has(entry.path)) continue;
-    const nodes = createEntry(projectId, depth, entry);
+    const nodes = createEntry(tree, depth, entry);
     for (const node of nodes) container.insertBefore(node, anchors[i]);
     existing.set(entry.path, nodes[0]);
   }
@@ -461,6 +659,13 @@ function showInFolderMenuOption(entry: DirEntry): MenuOption {
   };
 }
 
+function copyPathMenuOption(entry: DirEntry): MenuOption {
+  return {
+    label: 'Copy Path',
+    action: () => { void navigator.clipboard.writeText(entry.path); },
+  };
+}
+
 function deleteMenuOption(entry: DirEntry): MenuOption {
   return {
     label: 'Delete',
@@ -489,7 +694,25 @@ function confirmAndTrash(entry: DirEntry): void {
 
 export function renderFileTree(project: ProjectRecord, container: HTMLElement): void {
   ensureChangeSubscription();
-  activeTrees.set(project.id, { project, container });
   container.innerHTML = '';
-  renderChildren(project.id, project.path, 0, container);
+  const loc = projectFolderLocation(project);
+  if (!loc) {
+    closeFileTree(project.id);
+    return;
+  }
+  const kept = remoteBackends.get(project.id);
+  const backend = !loc.host ? localBackend : kept?.host === loc.host ? kept : sshBackend(loc.host);
+  // The project moved (local <-> remote, or another host): release the old
+  // tree's watches, poll and cache against the location they were made on.
+  const prev = activeTrees.get(project.id);
+  if (prev && prev.backend !== backend) closeFileTree(project.id);
+  if (backend.host) remoteBackends.set(project.id, backend);
+  const tree: Tree = { project, container, backend };
+  activeTrees.set(project.id, tree);
+  if (backend.host) {
+    // Folders left expanded load in one ssh call, not one login per level.
+    startLoads(tree, [loc.path, ...visibleExpanded(project.id, loc.path)]);
+    scheduleRemotePoll(project.id);
+  }
+  void renderChildren(tree, loc.path, 0, container);
 }

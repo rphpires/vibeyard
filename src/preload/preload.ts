@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
-import type { CostData, ProviderId, CliProviderMeta, StatsCache, ReadinessResult, ToolFailureData, SettingsWarningData, SettingsValidationResult, StatusLineConflictData, InspectorEvent, ProviderConfig, ReadFileResult, FileStatResult, TopFilesResult, FsChange, DeepSearchResult, GithubFetchResult, GithubRepo, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource } from '../shared/types';
+import type { CostData, ProviderId, CliProviderMeta, StatsCache, ReadinessResult, ToolFailureData, SettingsWarningData, SettingsValidationResult, StatusLineConflictData, InspectorEvent, ProviderConfig, ReadFileResult, FileStatResult, TopFilesResult, FsChange, DeepSearchResult, GithubFetchResult, GithubRepo, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource, DirEntry } from '../shared/types';
 import { clampZoom } from '../shared/types';
 import type { CtlCommand, CtlResult } from '../shared/ctl-protocol';
 import type { ViewKind } from '../shared/session-window';
@@ -23,6 +23,8 @@ export interface VibeyardApi {
     listHosts(): Promise<Array<{ alias: string; hostName?: string; user?: string; port?: string }>>;
     /** Subdirectory names of `remoteDir` on `host` ([] on failure). */
     listDirs(host: string, remoteDir: string): Promise<string[]>;
+    /** Entries of each absolute dir on `host`, in one ssh call (null = could not list). */
+    listDirEntries(host: string, dirs: string[]): Promise<Record<string, DirEntry[] | null>>;
   };
   session: {
     buildResumeWithPrompt(sourceProviderId: ProviderId, sourceCliSessionId: string | null, projectPath: string, sessionName: string, configDir?: string): Promise<string>;
@@ -56,7 +58,7 @@ export interface VibeyardApi {
     isDirectory(path: string): Promise<boolean>;
     expandPath(path: string): Promise<string>;
     listDirs(dirPath: string, prefix?: string): Promise<string[]>;
-    listDir(dirPath: string): Promise<Array<{ name: string; path: string; isDirectory: boolean }>>;
+    listDir(dirPath: string): Promise<DirEntry[]>;
     browseDirectory(): Promise<string | null>;
     listFiles(cwd: string, query: string): Promise<string[]>;
     topFilesByTokens(cwd: string, limit: number): Promise<TopFilesResult>;
@@ -224,6 +226,7 @@ const api: VibeyardApi = {
     resolveDir: (host, remotePath) => ipcRenderer.invoke('remote:resolveDir', host, remotePath),
     listHosts: () => ipcRenderer.invoke('remote:listHosts'),
     listDirs: (host, remoteDir) => ipcRenderer.invoke('remote:listDirs', host, remoteDir),
+    listDirEntries: (host, dirs) => ipcRenderer.invoke('remote:listDirEntries', host, dirs),
   },
   session: {
     buildResumeWithPrompt: (sourceProviderId, sourceCliSessionId, projectPath, sessionName, configDir) =>

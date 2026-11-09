@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localProjectFolder } from './project-folder';
+import { localProjectFolder, projectFolderLocation } from './project-folder';
 
 describe('localProjectFolder', () => {
   it('returns the path of a local project', () => {
@@ -10,5 +10,14 @@ describe('localProjectFolder', () => {
     expect(localProjectFolder({ path: '/srv/app', remoteHost: 'box' })).toBeUndefined();
     expect(localProjectFolder({ path: '', temporary: true })).toBeUndefined();
     expect(localProjectFolder({ path: '' })).toBeUndefined();
+  });
+});
+
+describe('projectFolderLocation', () => {
+  it('locates local and remote folders, none for Temporary', () => {
+    expect(projectFolderLocation({ path: '/repo/app' })).toEqual({ path: '/repo/app' });
+    expect(projectFolderLocation({ path: '/srv/app', remoteHost: 'box' })).toEqual({ path: '/srv/app', host: 'box' });
+    expect(projectFolderLocation({ path: '', temporary: true })).toBeUndefined();
+    expect(projectFolderLocation({ path: '' })).toBeUndefined();
   });
 });

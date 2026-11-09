@@ -21,8 +21,10 @@ import {
   buildEnvScript,
   remoteEnvFile,
   isMirrorFileFor,
+  buildListDirsScript,
+  parseListDirsOutput,
 } from './remote-ssh';
-import { pythonBin } from './platform';
+import { pythonBin, isWin } from './platform';
 
 const pythonAvailable = spawnSync(pythonBin, ['-c', 'pass']).status === 0;
 
@@ -341,6 +343,54 @@ describe.runIf(pythonAvailable)('statusline_chain.py (executed)', () => {
       expect(fs.readFileSync(path.join(status, 'seen.txt'), 'utf-8')).toBe('{"model":"opus"}');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('remote dir listing script', () => {
+  it('parses records per requested dir, skipping login noise; unreached dirs are null', () => {
+    const out = 'motd noise\n\0D\0dsrc\0f.env\0fa\nb.ts\0D\0!\0D\0';
+    expect(parseListDirsOutput(out, ['/srv/app', '/srv/gone', '/srv/empty', '/srv/late'])).toEqual({
+      '/srv/app': [
+        { name: 'src', path: '/srv/app/src', isDirectory: true },
+        { name: '.env', path: '/srv/app/.env', isDirectory: false },
+        { name: 'a\nb.ts', path: '/srv/app/a\nb.ts', isDirectory: false },
+      ],
+      '/srv/gone': null,
+      '/srv/empty': [],
+      '/srv/late': null,
+    });
+  });
+
+  it('a file name cannot open another dir or claim a path', () => {
+    // Every name record starts with d/f, so only the script's own `D` moves on.
+    const out = '\0D\0fD\0f../x\0D\0';
+    expect(parseListDirsOutput(out, ['/a', '/b'])).toEqual({
+      '/a': [{ name: 'D', path: '/a/D', isDirectory: false }],
+      '/b': [],
+    });
+  });
+
+  it('joins entries under the root without a double slash', () => {
+    expect(parseListDirsOutput('\0D\0detc\0', ['/'])['/']).toEqual([{ name: 'etc', path: '/etc', isDirectory: true }]);
+  });
+
+  const shAvailable = !isWin && spawnSync('sh', ['-c', 'true']).status === 0;
+  it.skipIf(!shAvailable)('lists real dirs (dotfiles included) through sh', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vy-ls-'));
+    try {
+      fs.mkdirSync(path.join(root, 'sub'));
+      fs.writeFileSync(path.join(root, ".hidden"), '');
+      fs.writeFileSync(path.join(root, "it's.txt"), '');
+      const missing = path.join(root, 'nope');
+      const res = spawnSync('sh', ['-s'], { input: buildListDirsScript([root, missing]), encoding: 'utf-8' });
+      const parsed = parseListDirsOutput(res.stdout, [root, missing]);
+      expect(parsed[missing]).toBeNull();
+      expect(parsed[root]!.map((e) => [e.name, e.isDirectory]).sort()).toEqual([
+        ['.hidden', false], ["it's.txt", false], ['sub', true],
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

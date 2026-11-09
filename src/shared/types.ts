@@ -718,6 +718,13 @@ export interface StatsCache {
 /** A single filesystem change emitted by the directory watcher (chokidar-backed). */
 export type FsChangeType = 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir';
 
+/** One entry of a directory listing (local `fs:listDir` or remote `remote:listDirEntries`). */
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+}
+
 export interface FsChange {
   /** Absolute path of the entry that changed. */
   path: string;
