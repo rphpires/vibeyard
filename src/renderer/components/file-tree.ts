@@ -1,89 +1,17 @@
-import { appState, ProjectRecord } from '../state.js';
-import { openFileReaderChecked } from '../open-file-reader.js';
-import { pathToFileURL } from '../file-url.js';
-import { showContextMenu, MenuOption } from './board/board-context-menu.js';
-import { showConfirmModal, showPropertiesDialog } from './modal.js';
-import { FILE_PATH_DRAG_TYPE } from '../drag-types.js';
-import { estimateTokens, TOKEN_COUNT_MAX_CHARS } from '../../shared/token-estimate.js';
-import { dirname, isPathUnder } from '../../shared/platform.js';
+import type { ProjectRecord } from '../state.js';
+import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE, droppedFilePaths } from '../drag-types.js';
+import { basename, dirname, isPathUnder } from '../../shared/platform.js';
 import { projectFolderLocation } from '../../shared/project-folder.js';
 import type { DirEntry } from '../../shared/types.js';
-import { isMac, isWin } from '../platform.js';
+import { isMac } from '../platform.js';
+import { localBackend, sshBackend, type Listing, type TreeBackend } from './file-tree-backends.js';
+import {
+  type TreeHandle, entryMenu, rootMenu, showMenuAt, openEntry, targetDir, pasteInto, importDropped,
+  copyToTreeClipboard, confirmDelete, promptRename, isCutPending, onTreeClipboardChange,
+} from './file-tree-actions.js';
 
 export type { DirEntry };
-
-/** A listing that could not be read (a remote dir over a failed ssh call). */
-type Listing = DirEntry[] | null;
-
-interface EntryCache {
-  entries: Map<string, DirEntry[]>;
-  inflight: Map<string, Promise<Listing>>;
-  /** Dirs whose last listing failed: not retried by re-renders, only by the poll or an expand. */
-  failed: Set<string>;
-}
-
-function newCache(): EntryCache {
-  return { entries: new Map(), inflight: new Map(), failed: new Set() };
-}
-
-/**
- * Where a tree's folders live, chosen once per tree. Every place the local
- * disk and an SSH host differ (listing, watching, row actions) asks this, so
- * shared tree code never branches on the location itself.
- */
-interface TreeBackend {
-  /** SSH host of a remote project; undefined for the local disk. */
-  readonly host?: string;
-  /** Listings; per remote project (its own poll keeps it fresh), shared locally (the fs watcher does). */
-  readonly cache: EntryCache;
-  /** List each dir: one `fs.listDir` each locally, one ssh call for all of them remotely. */
-  list(dirs: string[]): Promise<Record<string, Listing>>;
-  watch(dir: string): void;
-  unwatch(dir: string): void;
-  /** What clicking a file does; undefined when it cannot be opened here. */
-  openFile?(projectId: string, entry: DirEntry): void;
-  menu(projectId: string, entry: DirEntry): MenuOption[];
-}
-
-const localBackend: TreeBackend = {
-  cache: newCache(),
-  async list(dirs) {
-    const lists = await Promise.all(dirs.map((d) => window.vibeyard.fs.listDir(d).catch(() => [])));
-    return Object.fromEntries(dirs.map((d, i) => [d, lists[i]]));
-  },
-  watch: (dir) => window.vibeyard.fs.watchDir(dir),
-  unwatch: (dir) => window.vibeyard.fs.unwatchDir(dir),
-  openFile: (projectId, entry) => { void openFileReaderChecked(projectId, entry.path); },
-  menu: (projectId, entry) => entry.isDirectory
-    ? [showInFolderMenuOption(entry), deleteMenuOption(entry)]
-    : [
-        {
-          label: 'Open in Browser',
-          action: () => { appState.addBrowserTabSession(projectId, pathToFileURL(entry.path)); },
-        },
-        showInFolderMenuOption(entry),
-        { label: 'Properties', action: () => { showFileProperties(entry); } },
-        deleteMenuOption(entry),
-      ],
-};
-
-/**
- * A remote project's folders live on its host: rows can be dragged into a
- * session (the path is valid there) or have their path copied, but not
- * opened, revealed, inspected or trashed through the local filesystem.
- * There is no watcher on the host; the project's poll re-lists watched dirs.
- */
-function sshBackend(host: string): TreeBackend {
-  return {
-    host,
-    cache: newCache(),
-    list: (dirs) => window.vibeyard.remote.listDirEntries(host, dirs)
-      .catch(() => Object.fromEntries(dirs.map((d) => [d, null]))),
-    watch: () => {},
-    unwatch: () => {},
-    menu: (_projectId, entry) => [copyPathMenuOption(entry)],
-  };
-}
+export { FILE_MANAGER } from './file-tree-actions.js';
 
 const expandedFolders = new Map<string, Set<string>>();
 const watchedByProject = new Map<string, Set<string>>();
@@ -99,6 +27,8 @@ interface Tree {
   project: ProjectRecord;
   container: HTMLElement;
   backend: TreeBackend;
+  /** What the menus, dialogs and shortcuts act through (`handle.root` is the project folder). */
+  handle: TreeHandle;
 }
 const activeTrees = new Map<string, Tree>();
 /** Remote backends outlive re-renders (their cache is what saves an ssh call); dropped on close. */
@@ -337,6 +267,12 @@ export function _resetForTesting(): void {
   expandedFolders.clear();
   watchedByProject.clear();
   activeTrees.clear();
+  selectedByProject.clear();
+  focusedTree = null;
+  if (unsubClipboard) {
+    unsubClipboard();
+    unsubClipboard = null;
+  }
   pendingDirs.clear();
   flushScheduled = false;
   if (unsubFileChanged) {
@@ -384,6 +320,7 @@ async function loadEntries(tree: Tree, folderPath: string): Promise<Listing> {
 function makeRow(depth: number, entry: DirEntry, projectId: string): HTMLElement {
   const row = document.createElement('div');
   row.className = 'file-tree-row' + (entry.isDirectory ? ' is-dir' : ' is-file');
+  if (selectedByProject.get(projectId) === entry.path) row.classList.add('selected');
   row.style.paddingLeft = `${20 + depth * 14}px`;
   row.title = entry.path;
 
@@ -429,10 +366,10 @@ function createEntry(tree: Tree, depth: number, entry: DirEntry): HTMLElement[] 
   const { backend } = tree;
   const row = makeRow(depth, entry, projectId);
   row.dataset.entryPath = entry.path;
+  if (isCutPending(entry.path, backend.host)) row.classList.add('cut');
   row.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    showContextMenu(e.clientX, e.clientY, backend.menu(projectId, entry));
+    selectPath(projectId, entry.path);
+    showMenuAt(e, entryMenu(tree.handle, entry));
   });
 
   if (entry.isDirectory) {
@@ -445,6 +382,7 @@ function createEntry(tree: Tree, depth: number, entry: DirEntry): HTMLElement[] 
 
     row.addEventListener('click', (e) => {
       e.stopPropagation();
+      selectPath(projectId, entry.path);
       const nowExpanded = toggleFolder(projectId, entry.path);
       row.querySelector('.file-tree-chevron')!.classList.toggle('expanded', nowExpanded);
       if (nowExpanded) {
@@ -470,7 +408,8 @@ function createEntry(tree: Tree, depth: number, entry: DirEntry): HTMLElement[] 
   });
   row.addEventListener('click', (e) => {
     e.stopPropagation();
-    backend.openFile?.(projectId, entry);
+    selectPath(projectId, entry.path);
+    openEntry(tree.handle, entry);
   });
   return [row];
 }
@@ -582,116 +521,6 @@ async function reconcileChildren(
   }
 }
 
-async function showFileProperties(entry: DirEntry): Promise<void> {
-  const [statResult, readResult] = await Promise.all([
-    window.vibeyard.fs.stat(entry.path),
-    window.vibeyard.fs.readFile(entry.path),
-  ]);
-
-  const rows: Array<{ label: string; value: string; mono?: boolean }> = [];
-  rows.push({ label: 'Path', value: entry.path, mono: true });
-  rows.push({ label: 'Type', value: fileTypeLabel(entry.name) });
-  rows.push({ label: 'Size', value: statResult.ok ? formatBytes(statResult.size) : '—' });
-  rows.push({ label: 'Modified', value: statResult.ok ? formatMtime(statResult.mtimeMs) : '—' });
-
-  if (readResult.ok) {
-    const lines = readResult.content.length === 0 ? 0 : readResult.content.split('\n').length;
-    rows.push({ label: 'Lines', value: lines.toLocaleString() });
-    if (readResult.content.length > TOKEN_COUNT_MAX_CHARS) {
-      rows.push({ label: 'Tokens', value: 'too large to count' });
-    } else {
-      rows.push({ label: 'Tokens', value: `~ ${estimateTokens(readResult.content).toLocaleString()}` });
-    }
-  } else {
-    const why = readResult.reason === 'binary' ? 'binary file' : 'unreadable';
-    rows.push({ label: 'Lines', value: `— (${why})` });
-    rows.push({ label: 'Tokens', value: `— (${why})` });
-  }
-
-  showPropertiesDialog(entry.name, rows);
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let val = n / 1024;
-  let i = 0;
-  while (val >= 1024 && i < units.length - 1) {
-    val /= 1024;
-    i++;
-  }
-  return `${val.toFixed(1)} ${units[i]}`;
-}
-
-function formatMtime(ms: number): string {
-  const diffSec = Math.max(1, Math.floor((Date.now() - ms) / 1000));
-  let rel: string;
-  if (diffSec < 60) rel = `${diffSec}s ago`;
-  else if (diffSec < 3600) rel = `${Math.floor(diffSec / 60)}m ago`;
-  else if (diffSec < 86400) rel = `${Math.floor(diffSec / 3600)}h ago`;
-  else if (diffSec < 86400 * 30) rel = `${Math.floor(diffSec / 86400)}d ago`;
-  else rel = `${Math.floor(diffSec / (86400 * 30))}mo ago`;
-  return `${rel} · ${new Date(ms).toLocaleString()}`;
-}
-
-function fileTypeLabel(name: string): string {
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0 || dot === name.length - 1) return '(no ext)';
-  return name.slice(dot + 1).toLowerCase();
-}
-
-/** Name of the OS file manager, used in the reveal menu labels. Exported for tests. */
-export const FILE_MANAGER = isMac ? 'Finder' : isWin ? 'File Explorer' : 'File Manager';
-
-/**
- * A folder opens in the file manager showing its own contents; a file is
- * revealed inside its parent folder, selected. Main picks the two apart.
- */
-function showInFolderMenuOption(entry: DirEntry): MenuOption {
-  return {
-    label: `${entry.isDirectory ? 'Open' : 'Reveal'} in ${FILE_MANAGER}`,
-    action: async () => {
-      const result = await window.vibeyard.fs.showInFolder(entry.path);
-      if (!result.ok) {
-        console.warn(`Failed to show ${entry.path} in ${FILE_MANAGER}: ${result.error ?? 'unknown error'}`);
-      }
-    },
-  };
-}
-
-function copyPathMenuOption(entry: DirEntry): MenuOption {
-  return {
-    label: 'Copy Path',
-    action: () => { void navigator.clipboard.writeText(entry.path); },
-  };
-}
-
-function deleteMenuOption(entry: DirEntry): MenuOption {
-  return {
-    label: 'Delete',
-    danger: true,
-    action: () => confirmAndTrash(entry),
-  };
-}
-
-function confirmAndTrash(entry: DirEntry): void {
-  const kind = entry.isDirectory ? 'folder' : 'file';
-  const message = entry.isDirectory
-    ? `Move "${entry.name}" and its contents to the Trash?`
-    : `Move "${entry.name}" to the Trash?`;
-  showConfirmModal(
-    `Delete ${kind}`,
-    message,
-    async () => {
-      const result = await window.vibeyard.fs.trashItem(entry.path);
-      if (!result.ok) {
-        console.warn(`Failed to trash ${entry.path}: ${result.error ?? 'unknown error'}`);
-      }
-    },
-    { confirmLabel: 'Delete', danger: true },
-  );
-}
-
 export function renderFileTree(project: ProjectRecord, container: HTMLElement): void {
   ensureChangeSubscription();
   container.innerHTML = '';
@@ -707,12 +536,175 @@ export function renderFileTree(project: ProjectRecord, container: HTMLElement): 
   const prev = activeTrees.get(project.id);
   if (prev && prev.backend !== backend) closeFileTree(project.id);
   if (backend.host) remoteBackends.set(project.id, backend);
-  const tree: Tree = { project, container, backend };
+  const tree: Tree = { project, container, backend, handle: makeHandle(project.id, loc.path, backend, container) };
   activeTrees.set(project.id, tree);
+  wireContainer(tree);
   if (backend.host) {
     // Folders left expanded load in one ssh call, not one login per level.
     startLoads(tree, [loc.path, ...visibleExpanded(project.id, loc.path)]);
     scheduleRemotePoll(project.id);
   }
   void renderChildren(tree, loc.path, 0, container);
+  // A sidebar re-render replaced the focused tree: keep its shortcuts working.
+  // The sidebar attaches the new container after this call, hence the frame.
+  if (focusedTree === project.id) {
+    requestAnimationFrame(() => {
+      const idle = !document.activeElement || document.activeElement === document.body;
+      if (idle && container.isConnected && focusedTree === project.id) container.focus({ preventScroll: true });
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Selection, shortcuts, drop
+// ---------------------------------------------------------------------------
+
+/** The selected row's path per project: survives re-renders, target of the keyboard shortcuts. */
+const selectedByProject = new Map<string, string>();
+/** Project whose tree had keyboard focus (restored when a re-render replaces the container). */
+let focusedTree: string | null = null;
+let unsubClipboard: (() => void) | null = null;
+
+function rowFor(container: HTMLElement, path: string): HTMLElement | null {
+  return container.querySelector(`.file-tree-row[data-entry-path="${CSS.escape(path)}"]`);
+}
+
+function selectPath(projectId: string, path: string | null): void {
+  const container = activeTrees.get(projectId)?.container;
+  container?.querySelectorAll('.file-tree-row.selected').forEach((r) => r.classList.remove('selected'));
+  if (path === null) {
+    selectedByProject.delete(projectId);
+    return;
+  }
+  selectedByProject.set(projectId, path);
+  if (container) rowFor(container, path)?.classList.add('selected');
+}
+
+/** The selected entry, read back from its row (null when nothing, or nothing still shown, is selected). */
+function selectedEntry(tree: Tree): DirEntry | null {
+  const path = selectedByProject.get(tree.project.id);
+  const row = path ? rowFor(tree.container, path) : null;
+  if (!path || !row) return null;
+  return { name: basename(path), path, isDirectory: row.classList.contains('is-dir') };
+}
+
+function makeHandle(projectId: string, root: string, backend: TreeBackend, container: HTMLElement): TreeHandle {
+  return {
+    projectId,
+    root,
+    backend,
+    refresh(dirs) {
+      // A local tree follows the fs watcher; a remote one re-lists now instead of at the next poll.
+      const now = activeTrees.get(projectId);
+      if (!backend.host || now?.backend !== backend) return;
+      const watched = watchedByProject.get(projectId);
+      const shown = [...new Set(dirs)].filter((d) => watched?.has(d));
+      if (shown.length > 0) void refreshRemoteDirs(now, shown);
+    },
+    select: (path) => selectPath(projectId, path),
+    setBusy: (busy) => { (activeTrees.get(projectId)?.container ?? container).classList.toggle('file-tree-busy', busy); },
+  };
+}
+
+function ensureClipboardSubscription(): void {
+  if (unsubClipboard) return;
+  unsubClipboard = onTreeClipboardChange(() => {
+    for (const tree of activeTrees.values()) {
+      tree.container.querySelectorAll<HTMLElement>('.file-tree-row[data-entry-path]').forEach((row) => {
+        row.classList.toggle('cut', isCutPending(row.dataset.entryPath!, tree.backend.host));
+      });
+    }
+  });
+}
+
+function onTreeKeydown(tree: Tree, e: KeyboardEvent): void {
+  const t = tree.handle;
+  const entry = selectedEntry(tree);
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  const key = e.key.toLowerCase();
+  if (mod && key === 'v') {
+    void pasteInto(t, entry ? targetDir(entry) : t.root);
+  } else if (mod && (key === 'c' || key === 'x') && entry) {
+    copyToTreeClipboard(t, [entry], key === 'x');
+  } else if ((e.key === 'Delete' || (isMac && mod && e.key === 'Backspace')) && entry) {
+    confirmDelete(t, entry);
+  } else if (e.key === 'F2' && entry) {
+    promptRename(t, entry);
+  } else if (e.key === 'Enter' && entry) {
+    rowFor(tree.container, entry.path)?.click();
+  } else if (e.key === 'Escape' && entry) {
+    selectPath(tree.project.id, null);
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+/** The folder a drop over `target` lands in: a folder row, a file row's folder, else the project folder. */
+function dropDir(tree: Tree, target: EventTarget | null): { dir: string; el: HTMLElement } {
+  const row = target instanceof Element ? target.closest<HTMLElement>('.file-tree-row[data-entry-path]') : null;
+  if (!row || !tree.container.contains(row)) return { dir: tree.handle.root, el: tree.container };
+  const path = row.dataset.entryPath!;
+  if (row.classList.contains('is-dir')) return { dir: path, el: row };
+  const parent = dirname(path);
+  const parentRow = parent === tree.handle.root ? null : rowFor(tree.container, parent);
+  return { dir: parent, el: parentRow ?? tree.container };
+}
+
+function clearDropTarget(container: HTMLElement): void {
+  container.classList.remove('drop-target');
+  container.querySelectorAll('.drop-target').forEach((el) => el.classList.remove('drop-target'));
+}
+
+/** Container-level wiring: empty-area menu, shortcuts, OS-file drop, focus tracking. Once per container. */
+function wireContainer(tree: Tree): void {
+  const { container } = tree;
+  const projectId = tree.project.id;
+  container.tabIndex = 0;
+  ensureClipboardSubscription();
+  // Listeners read the live tree, so a re-render handing over the same container stays correct.
+  const live = () => activeTrees.get(projectId);
+  if (container.dataset.treeWired) return;
+  container.dataset.treeWired = '1';
+
+  container.addEventListener('contextmenu', (e) => {
+    const t = live();
+    if (t?.container === container) showMenuAt(e, rootMenu(t.handle));
+  });
+  container.addEventListener('keydown', (e) => {
+    const t = live();
+    if (t?.container === container) onTreeKeydown(t, e);
+  });
+  container.addEventListener('focusin', () => { focusedTree = projectId; });
+  container.addEventListener('focusout', () => {
+    // A focusout caused by a re-render removing this container keeps the flag.
+    setTimeout(() => {
+      if (container.isConnected && !container.contains(document.activeElement) && focusedTree === projectId) focusedTree = null;
+    }, 0);
+  });
+
+  container.addEventListener('dragover', (e) => {
+    const t = live();
+    if (!t || t.container !== container || !e.dataTransfer?.types.includes(NATIVE_FILES_DRAG_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const { el } = dropDir(t, e.target);
+    if (!el.classList.contains('drop-target')) {
+      clearDropTarget(container);
+      el.classList.add('drop-target');
+    }
+  });
+  container.addEventListener('dragleave', (e) => {
+    const next = e.relatedTarget as Node | null;
+    if (!next || !container.contains(next)) clearDropTarget(container);
+  });
+  container.addEventListener('drop', (e) => {
+    clearDropTarget(container);
+    const t = live();
+    if (!t || t.container !== container || !e.dataTransfer?.types.includes(NATIVE_FILES_DRAG_TYPE)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    importDropped(t.handle, droppedFilePaths(e.dataTransfer), dropDir(t, e.target).dir);
+  });
 }

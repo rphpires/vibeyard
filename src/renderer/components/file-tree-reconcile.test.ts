@@ -5,13 +5,18 @@ import type { FsChange } from '../../shared/types';
 vi.mock('../state.js', () => ({
   appState: { addFileReaderSession: vi.fn(), addBrowserTabSession: vi.fn() },
 }));
-vi.mock('./modal.js', () => ({ showConfirmModal: vi.fn(), showPropertiesDialog: vi.fn() }));
+vi.mock('./modal.js', () => ({
+  showConfirmModal: vi.fn(), showConfirmDialog: vi.fn(), showPropertiesDialog: vi.fn(),
+  showModal: vi.fn(), closeModal: vi.fn(), setModalError: vi.fn(),
+}));
 vi.mock('./board/board-context-menu.js', () => ({ showContextMenu: vi.fn() }));
 vi.mock('../open-file-reader.js', () => ({ openFileReaderChecked: vi.fn() }));
 vi.mock('../file-url.js', () => ({ pathToFileURL: (p: string) => `file://${p}` }));
 
 import { renderFileTree, closeFileTree, toggleFolder, _resetForTesting, DirEntry, isExpanded, FILE_MANAGER, REMOTE_POLL_MS } from './file-tree.js';
 import { openFileReaderChecked } from '../open-file-reader.js';
+import { showConfirmModal, showModal, setModalError } from './modal.js';
+import { _resetTreeClipboardForTesting } from './file-tree-actions.js';
 import { showContextMenu, MenuOption } from './board/board-context-menu.js';
 
 // --- Fake filesystem backing window.vibeyard.fs ---
@@ -189,9 +194,7 @@ describe('show in file manager menu option', () => {
     await settle();
 
     const options = openMenu(container, '/proj/src');
-    expect(options.map((o) => o.label)).toEqual([`Open in ${FILE_MANAGER}`, 'Delete']);
-
-    options[0].action();
+    options.find((o) => o.label === `Open in ${FILE_MANAGER}`)!.action();
     expect((globalThis as any).vibeyard.fs.showInFolder).toHaveBeenCalledWith('/proj/src');
   });
 
@@ -202,11 +205,7 @@ describe('show in file manager menu option', () => {
     await settle();
 
     const options = openMenu(container, '/proj/a.ts');
-    expect(options.map((o) => o.label)).toEqual([
-      'Open in Browser', `Reveal in ${FILE_MANAGER}`, 'Properties', 'Delete',
-    ]);
-
-    options[1].action();
+    options.find((o) => o.label === `Reveal in ${FILE_MANAGER}`)!.action();
     expect((globalThis as any).vibeyard.fs.showInFolder).toHaveBeenCalledWith('/proj/a.ts');
   });
 });
@@ -332,17 +331,187 @@ describe('remote (SSH) project tree', () => {
     expect(rows(container)).toEqual(['/srv/app/a.ts']);
     container.remove();
   }));
+});
 
-  it('offers only Copy Path, and a file click opens nothing', async () => {
-    dirContents.set('/srv/app', [entry('src', '/srv/app', true), entry('a.ts', '/srv/app', false)]);
-    useRemote();
+describe('file operations', () => {
+  const ok = (paths?: string[]) => Promise.resolve({ ok: true, ...(paths ? { paths } : {}) });
+  const pick = (options: MenuOption[], label: string) => {
+    const o = options.find((x) => x.label === label);
+    if (!o) throw new Error(`no "${label}" in ${options.map((x) => x.label).join(', ')}`);
+    return o;
+  };
+  const local = () => ({ id: 'p1', path: '/proj' } as any);
+  const remote = () => ({ id: 'r1', path: '/srv/app', remoteHost: 'box' } as any);
+  let fs: any;
+  let rem: any;
+  let clip: any;
+
+  beforeEach(() => {
+    vi.mocked(showConfirmModal).mockReset();
+    vi.mocked(showModal).mockReset();
+    vi.mocked(openFileReaderChecked).mockReset();
+    _resetTreeClipboardForTesting();
+    const api = (globalThis as any).vibeyard;
+    fs = Object.assign(api.fs, {
+      createEntry: vi.fn(() => ok(['/proj/new.ts'])),
+      renameEntry: vi.fn(() => ok()),
+      copyEntries: vi.fn(() => ok(['/proj/a (1).ts'])),
+      pasteClipboard: vi.fn(() => Promise.resolve({ ok: true, empty: true })),
+      deleteEntry: vi.fn(() => ok()),
+      getDroppedFilePath: vi.fn((f: { path: string }) => f.path),
+    });
+    rem = api.remote = {
+      listDirEntries: vi.fn(async (_h: string, dirs: string[]) => Object.fromEntries(dirs.map((d) => [d, dirContents.get(d) ?? []]))),
+      copyEntries: vi.fn(() => ok(['/srv/app/src/a.ts'])),
+      deleteEntry: vi.fn(() => ok()),
+      upload: vi.fn(() => ok(['/srv/app/a.ts'])),
+      download: vi.fn(() => ok(['/proj/x.ts'])),
+      pasteClipboard: vi.fn(() => Promise.resolve({ ok: true, empty: true })),
+      openCopy: vi.fn(() => ok(['/home/me/.vibeyard/remote-files/box/srv/app/a.ts'])),
+    };
+    clip = api.clipboard = { write: vi.fn(() => Promise.resolve()) };
+  });
+
+  async function tree(project: any): Promise<HTMLElement> {
     const container = document.createElement('div');
-    renderFileTree(remoteProject(), container);
+    document.body.appendChild(container);
+    renderFileTree(project, container);
     await settle();
+    return container;
+  }
 
-    expect(openMenu(container, '/srv/app/src').map((o) => o.label)).toEqual(['Copy Path']);
-    expect(openMenu(container, '/srv/app/a.ts').map((o) => o.label)).toEqual(['Copy Path']);
-    (container.querySelector('[data-entry-path="/srv/app/a.ts"]') as HTMLElement).dispatchEvent(new Event('click'));
-    expect(vi.mocked(openFileReaderChecked)).not.toHaveBeenCalled();
+  it('offers the full menu locally and the remote variant on a host', async () => {
+    dirContents.set('/proj', [entry('src', '/proj', true), entry('a.ts', '/proj', false)]);
+    const c = await tree(local());
+    expect(openMenu(c, '/proj/src').map((o) => o.label)).toEqual([
+      'New File…', 'New Folder…', 'Cut', 'Copy', 'Paste', 'Copy Path', 'Rename…', `Open in ${FILE_MANAGER}`, 'Delete',
+    ]);
+    expect(openMenu(c, '/proj/a.ts').map((o) => o.label)).toEqual([
+      'Open', 'Open in Browser', 'Cut', 'Copy', 'Paste', 'Copy Path', 'Rename…', `Reveal in ${FILE_MANAGER}`, 'Properties', 'Delete',
+    ]);
+
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false)]);
+    const r = await tree(remote());
+    expect(openMenu(r, '/srv/app/a.ts').map((o) => o.label)).toEqual([
+      'Open (read-only copy)', 'Cut', 'Copy', 'Paste', 'Copy Path', 'Rename…', 'Download…', 'Properties', 'Delete',
+    ]);
+  });
+
+  it('the empty area offers New and Paste into the project folder', async () => {
+    const c = await tree(local());
+    vi.mocked(showContextMenu).mockClear();
+    c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    const options = vi.mocked(showContextMenu).mock.calls[0][2];
+    expect(options.map((o) => o.label)).toEqual(['New File…', 'New Folder…', 'Paste', 'Copy Path']);
+  });
+
+  it('Copy then Paste copies the entry, writing its path to the OS clipboard', async () => {
+    dirContents.set('/proj', [entry('src', '/proj', true), entry('a.ts', '/proj', false)]);
+    const c = await tree(local());
+    pick(openMenu(c, '/proj/a.ts'), 'Copy').action();
+    expect(clip.write).toHaveBeenCalledWith('/proj/a.ts', 'explicit');
+
+    pick(openMenu(c, '/proj/src'), 'Paste').action();
+    await settle();
+    expect(fs.pasteClipboard).toHaveBeenCalledWith('/proj/src');
+    expect(fs.copyEntries).toHaveBeenCalledWith(['/proj/a.ts'], '/proj/src', false);
+  });
+
+  it('files or an image on the OS clipboard win over the tree clipboard', async () => {
+    dirContents.set('/proj', [entry('a.ts', '/proj', false)]);
+    fs.pasteClipboard.mockImplementation(() => ok(['/proj/pasted-image.png']));
+    const c = await tree(local());
+    pick(openMenu(c, '/proj/a.ts'), 'Copy').action();
+    pick(openMenu(c, '/proj/a.ts'), 'Paste').action();
+    await settle();
+    expect(fs.pasteClipboard).toHaveBeenCalledWith('/proj');
+    expect(fs.copyEntries).not.toHaveBeenCalled();
+  });
+
+  it('Cut dims the row; pasting on the host moves it, re-lists, and clears the clipboard', async () => {
+    dirContents.set('/srv/app', [entry('src', '/srv/app', true), entry('a.ts', '/srv/app', false)]);
+    const c = await tree(remote());
+    pick(openMenu(c, '/srv/app/a.ts'), 'Cut').action();
+    const row = () => c.querySelector('[data-entry-path="/srv/app/a.ts"]')!;
+    expect(row().classList.contains('cut')).toBe(true);
+
+    rem.listDirEntries.mockClear();
+    pick(openMenu(c, '/srv/app/src'), 'Paste').action();
+    await settle();
+    expect(rem.copyEntries).toHaveBeenCalledWith('box', ['/srv/app/a.ts'], '/srv/app/src', true);
+    // The root (watched) is re-listed right away; the collapsed src is not.
+    expect(rem.listDirEntries).toHaveBeenCalledWith('box', ['/srv/app']);
+    expect(row()?.classList.contains('cut') ?? false).toBe(false);
+  });
+
+  it('pasting a local copy into a remote tree uploads it', async () => {
+    dirContents.set('/proj', [entry('a.ts', '/proj', false)]);
+    const c = await tree(local());
+    pick(openMenu(c, '/proj/a.ts'), 'Copy').action();
+    closeFileTree('p1');
+
+    const r = await tree(remote());
+    r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    pick(vi.mocked(showContextMenu).mock.calls.at(-1)![2], 'Paste').action();
+    await settle();
+    expect(rem.upload).toHaveBeenCalledWith('box', ['/proj/a.ts'], '/srv/app');
+  });
+
+  it('deleting on the host warns it is permanent, then deletes', async () => {
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false)]);
+    const c = await tree(remote());
+    pick(openMenu(c, '/srv/app/a.ts'), 'Delete').action();
+    const [title, message, onConfirm] = vi.mocked(showConfirmModal).mock.calls[0];
+    expect(title).toBe('Delete file');
+    expect(message).toMatch(/Permanently delete "a.ts" on box\? This cannot be undone/);
+    onConfirm();
+    await settle();
+    expect(rem.deleteEntry).toHaveBeenCalledWith('box', '/srv/app/a.ts');
+  });
+
+  it('keyboard: a click selects; F2 renames, Delete deletes, Ctrl/Cmd+C copies', async () => {
+    dirContents.set('/proj', [entry('src', '/proj', true)]);
+    const c = await tree(local());
+    const row = c.querySelector('[data-entry-path="/proj/src"]') as HTMLElement;
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(row.classList.contains('selected')).toBe(true);
+
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true }));
+    expect(vi.mocked(showModal).mock.calls[0][0]).toBe('Rename folder');
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    expect(vi.mocked(showConfirmModal).mock.calls[0][1]).toMatch(/Move "src" and its contents to the Trash/);
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, metaKey: true, bubbles: true }));
+    expect(clip.write).toHaveBeenCalledWith('/proj/src', 'explicit');
+  });
+
+  it('dropping OS files on a folder copies them into it', async () => {
+    dirContents.set('/proj', [entry('src', '/proj', true)]);
+    const c = await tree(local());
+    const target = c.querySelector('[data-entry-path="/proj/src"]') as HTMLElement;
+    const drop = new Event('drop', { bubbles: true, cancelable: true }) as any;
+    drop.dataTransfer = { types: ['Files'], files: [{ path: 'C:/Users/me/shot.png' }] };
+    target.dispatchEvent(drop);
+    await settle();
+    expect(fs.copyEntries).toHaveBeenCalledWith(['C:/Users/me/shot.png'], '/proj/src', false);
+  });
+
+  it('a remote file click opens a read-only local copy', async () => {
+    dirContents.set('/srv/app', [entry('a.ts', '/srv/app', false)]);
+    const c = await tree(remote());
+    (c.querySelector('[data-entry-path="/srv/app/a.ts"]') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await settle();
+    expect(rem.openCopy).toHaveBeenCalledWith('box', '/srv/app/a.ts');
+    expect(openFileReaderChecked).toHaveBeenCalledWith('r1', '/home/me/.vibeyard/remote-files/box/srv/app/a.ts');
+  });
+
+  it('New Folder validates the name and creates it', async () => {
+    const c = await tree(local());
+    c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    pick(vi.mocked(showContextMenu).mock.calls.at(-1)![2], 'New Folder…').action();
+    const onConfirm = vi.mocked(showModal).mock.calls[0][2];
+    await onConfirm({ name: 'a/b' });
+    expect(setModalError).toHaveBeenCalledWith('name', expect.stringMatching(/cannot contain/));
+    await onConfirm({ name: 'lib' });
+    expect(fs.createEntry).toHaveBeenCalledWith('/proj', 'lib', 'dir');
   });
 });

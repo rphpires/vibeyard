@@ -1,6 +1,7 @@
 export type { McpServer, Agent, Skill, Command, ProviderConfig, ClaudeConfig, GitWorktree, GitFileEntry, CostData, McpResult, ProviderId, CliProviderMeta, CliProviderCapabilities, StatsCache, ReadinessResult, ReadinessCategory, ReadinessCheck, ReadinessCheckStatus, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource } from '../shared/types.js';
 import type { CostData, ProviderConfig, GitWorktree, McpResult, ProviderId, CliProviderMeta, StatsCache, ReadinessResult, TopFilesResult, FsChange, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource, DirEntry } from '../shared/types.js';
 import type { CtlCommand, CtlResult } from '../shared/ctl-protocol.js';
+import type { FileOpResult } from '../shared/file-names.js';
 
 export interface VibeyardApi {
   pty: {
@@ -22,6 +23,18 @@ export interface VibeyardApi {
     listDirs(host: string, remoteDir: string): Promise<string[]>;
     /** Entries of each absolute dir on `host`, in one ssh call (null = could not list). */
     listDirEntries(host: string, dirs: string[]): Promise<Record<string, DirEntry[] | null>>;
+    /** File-tree operations in a remote project's folder on `host` (see `file-ops-ipc.ts`). */
+    createEntry(host: string, dir: string, name: string, kind: 'file' | 'dir'): Promise<FileOpResult>;
+    renameEntry(host: string, target: string, newName: string): Promise<FileOpResult>;
+    deleteEntry(host: string, target: string): Promise<FileOpResult>;
+    copyEntries(host: string, sources: string[], destDir: string, move: boolean): Promise<FileOpResult>;
+    stat(host: string, target: string): Promise<{ ok: true; size: number; mtimeMs: number } | { ok: false; error: string }>;
+    upload(host: string, localPaths: string[], destDir: string): Promise<FileOpResult>;
+    pasteClipboard(host: string, destDir: string): Promise<FileOpResult>;
+    /** Into a local project folder, or (omitted) a folder the user picks; no `paths` = cancelled. */
+    download(host: string, remotePaths: string[], localDestDir?: string): Promise<FileOpResult>;
+    /** Fetch a read-only local copy of a host file; `paths[0]` is the copy. */
+    openCopy(host: string, remotePath: string): Promise<FileOpResult>;
   };
   session: {
     transcriptExists(providerId: ProviderId, cliSessionId: string | null, projectPath: string, configDir?: string): Promise<boolean>;
@@ -51,6 +64,14 @@ export interface VibeyardApi {
     readFile(filePath: string): Promise<string>;
     readImage(filePath: string): Promise<{ dataUrl: string } | null>;
     showInFolder(targetPath: string): Promise<{ ok: boolean; error?: string }>;
+    /** File-tree operations in a local project (see `file-ops-ipc.ts` for the sandbox). */
+    createEntry(dir: string, name: string, kind: 'file' | 'dir'): Promise<FileOpResult>;
+    renameEntry(target: string, newName: string): Promise<FileOpResult>;
+    /** Move to the Trash (never a project folder itself; a symlink is trashed, not followed). */
+    deleteEntry(target: string): Promise<FileOpResult>;
+    copyEntries(sources: string[], destDir: string, move: boolean): Promise<FileOpResult>;
+    /** Paste the OS clipboard's files or image into `destDir`; `empty` when it holds neither. */
+    pasteClipboard(destDir: string): Promise<FileOpResult>;
     watchDir(dirPath: string): void;
     unwatchDir(dirPath: string): void;
     onFsChange(callback: (changes: FsChange[]) => void): () => void;

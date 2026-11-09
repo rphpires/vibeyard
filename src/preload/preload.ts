@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import type { CostData, ProviderId, CliProviderMeta, StatsCache, ReadinessResult, ToolFailureData, SettingsWarningData, SettingsValidationResult, StatusLineConflictData, InspectorEvent, ProviderConfig, ReadFileResult, FileStatResult, TopFilesResult, FsChange, DeepSearchResult, GithubFetchResult, GithubRepo, ChromeProfile, ChromeImportOptions, ChromeImportProgress, ChromeImportResult, ClipboardSource, DirEntry } from '../shared/types';
 import { ZOOM_MIN, ZOOM_MAX } from '../shared/types';
 import type { CtlCommand, CtlResult } from '../shared/ctl-protocol';
+import type { FileOpResult } from '../shared/file-names';
 
 export type { CostData } from '../shared/types';
 
@@ -24,6 +25,18 @@ export interface VibeyardApi {
     listDirs(host: string, remoteDir: string): Promise<string[]>;
     /** Entries of each absolute dir on `host`, in one ssh call (null = could not list). */
     listDirEntries(host: string, dirs: string[]): Promise<Record<string, DirEntry[] | null>>;
+    /** File-tree operations in a remote project's folder on `host` (see `file-ops-ipc.ts`). */
+    createEntry(host: string, dir: string, name: string, kind: 'file' | 'dir'): Promise<FileOpResult>;
+    renameEntry(host: string, target: string, newName: string): Promise<FileOpResult>;
+    deleteEntry(host: string, target: string): Promise<FileOpResult>;
+    copyEntries(host: string, sources: string[], destDir: string, move: boolean): Promise<FileOpResult>;
+    stat(host: string, target: string): Promise<{ ok: true; size: number; mtimeMs: number } | { ok: false; error: string }>;
+    upload(host: string, localPaths: string[], destDir: string): Promise<FileOpResult>;
+    pasteClipboard(host: string, destDir: string): Promise<FileOpResult>;
+    /** Into a local project folder, or (omitted) a folder the user picks; no `paths` = cancelled. */
+    download(host: string, remotePaths: string[], localDestDir?: string): Promise<FileOpResult>;
+    /** Fetch a read-only local copy of a host file; `paths[0]` is the copy. */
+    openCopy(host: string, remotePath: string): Promise<FileOpResult>;
   };
   session: {
     buildResumeWithPrompt(sourceProviderId: ProviderId, sourceCliSessionId: string | null, projectPath: string, sessionName: string, configDir?: string): Promise<string>;
@@ -58,8 +71,15 @@ export interface VibeyardApi {
     readFile(filePath: string): Promise<ReadFileResult>;
     stat(filePath: string): Promise<FileStatResult>;
     readImage(filePath: string): Promise<{ dataUrl: string } | null>;
-    trashItem(filePath: string): Promise<{ ok: boolean; error?: string }>;
     showInFolder(targetPath: string): Promise<{ ok: boolean; error?: string }>;
+    /** File-tree operations in a local project (see `file-ops-ipc.ts` for the sandbox). */
+    createEntry(dir: string, name: string, kind: 'file' | 'dir'): Promise<FileOpResult>;
+    renameEntry(target: string, newName: string): Promise<FileOpResult>;
+    /** Move to the Trash (never a project folder itself; a symlink is trashed, not followed). */
+    deleteEntry(target: string): Promise<FileOpResult>;
+    copyEntries(sources: string[], destDir: string, move: boolean): Promise<FileOpResult>;
+    /** Paste the OS clipboard's files or image into `destDir`; `empty` when it holds neither. */
+    pasteClipboard(destDir: string): Promise<FileOpResult>;
     watchDir(dirPath: string): void;
     unwatchDir(dirPath: string): void;
     onFsChange(callback: (changes: FsChange[]) => void): () => void;
@@ -212,6 +232,15 @@ const api: VibeyardApi = {
     listHosts: () => ipcRenderer.invoke('remote:listHosts'),
     listDirs: (host, remoteDir) => ipcRenderer.invoke('remote:listDirs', host, remoteDir),
     listDirEntries: (host, dirs) => ipcRenderer.invoke('remote:listDirEntries', host, dirs),
+    createEntry: (host, dir, name, kind) => ipcRenderer.invoke('remote:createEntry', host, dir, name, kind),
+    renameEntry: (host, target, newName) => ipcRenderer.invoke('remote:renameEntry', host, target, newName),
+    deleteEntry: (host, target) => ipcRenderer.invoke('remote:deleteEntry', host, target),
+    copyEntries: (host, sources, destDir, move) => ipcRenderer.invoke('remote:copyEntries', host, sources, destDir, move),
+    stat: (host, target) => ipcRenderer.invoke('remote:stat', host, target),
+    upload: (host, localPaths, destDir) => ipcRenderer.invoke('remote:upload', host, localPaths, destDir),
+    pasteClipboard: (host, destDir) => ipcRenderer.invoke('remote:pasteClipboard', host, destDir),
+    download: (host, remotePaths, localDestDir) => ipcRenderer.invoke('remote:download', host, remotePaths, localDestDir),
+    openCopy: (host, remotePath) => ipcRenderer.invoke('remote:openCopy', host, remotePath),
   },
   session: {
     buildResumeWithPrompt: (sourceProviderId, sourceCliSessionId, projectPath, sessionName, configDir) =>
@@ -265,12 +294,21 @@ const api: VibeyardApi = {
     readFile: (filePath: string) => ipcRenderer.invoke('fs:readFile', filePath),
     stat: (filePath: string) => ipcRenderer.invoke('fs:stat', filePath),
     readImage: (filePath: string) => ipcRenderer.invoke('fs:readImage', filePath),
-    trashItem: (filePath: string) => ipcRenderer.invoke('fs:trashItem', filePath),
     showInFolder: (targetPath: string) => ipcRenderer.invoke('fs:showInFolder', targetPath),
+    createEntry: (dir, name, kind) => ipcRenderer.invoke('fs:createEntry', dir, name, kind),
+    renameEntry: (target, newName) => ipcRenderer.invoke('fs:renameEntry', target, newName),
+    deleteEntry: (target) => ipcRenderer.invoke('fs:deleteEntry', target),
+    copyEntries: (sources, destDir, move) => ipcRenderer.invoke('fs:copyEntries', sources, destDir, move),
+    pasteClipboard: (destDir) => ipcRenderer.invoke('fs:pasteClipboard', destDir),
     watchDir: (dirPath: string) => ipcRenderer.send('fs:watchDir', dirPath),
     unwatchDir: (dirPath: string) => ipcRenderer.send('fs:unwatchDir', dirPath),
     onFsChange: (callback: (changes: FsChange[]) => void) => onChannel('fs:changed', (changes) => callback(changes as FsChange[])),
-    getDroppedFilePath: (file: File) => webUtils.getPathForFile(file),
+    getDroppedFilePath: (file: File) => {
+      const p = webUtils.getPathForFile(file);
+      // Only a genuine drop's File yields a path: let main copy that one file (see file-ops-ipc.ts).
+      if (p) ipcRenderer.send('fs:grantDropped', p);
+      return p;
+    },
   },
   provider: {
     getConfig: (providerId, projectPath) => ipcRenderer.invoke('provider:getConfig', providerId, projectPath),

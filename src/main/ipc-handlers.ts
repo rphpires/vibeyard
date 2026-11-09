@@ -14,6 +14,8 @@ import { getGitStatus, getGitFiles, getGitDiff, getGitWorktrees, gitStageFile, g
 import { startGitWatcher, stopGitWatcher, notifyGitChanged } from './git-watcher';
 import { watchDir, unwatchDir, setFileWatcherWindow } from './file-watcher';
 import { registerMcpHandlers } from './mcp-ipc-handlers';
+import { registerFileOpsHandlers } from './file-ops-ipc';
+import { REMOTE_FILES_DIR } from './remote-file-ops';
 import { checkForUpdates, quitAndInstall } from './auto-updater';
 import { createAppMenu } from './menu';
 import { createCtlServer, type CtlServer } from './ctl-server';
@@ -90,6 +92,8 @@ function isAllowedReadPath(resolvedPath: string): boolean {
     path.join(home, '.codex') + path.sep,
     path.join(home, '.gemini') + path.sep,
     path.join(home, '.copilot') + path.sep,
+    // Read-only local copies of remote project files, opened in the file reader.
+    REMOTE_FILES_DIR + path.sep,
   ];
 
   if (isMac) {
@@ -802,9 +806,6 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('fs:trashItem', (_event, filePath: string) =>
-    withProjectPath('fs:trashItem', filePath, (resolved) => shell.trashItem(resolved)));
-
   ipcMain.handle('fs:showInFolder', (_event, targetPath: string) =>
     withProjectPath('fs:showInFolder', targetPath, async (resolved) => {
       // lstat, not stat: a symlink must never be followed here. isWithinKnownProject
@@ -895,6 +896,7 @@ export function registerIpcHandlers(): void {
   });
 
   registerMcpHandlers();
+  registerFileOpsHandlers();
 
   ctlServer = createCtlServer({
     commandsRoot: CTL_COMMANDS_ROOT,

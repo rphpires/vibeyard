@@ -25,6 +25,39 @@
   color: var(--text-primary);
 }
 
+/* The tree is focusable for its keyboard shortcuts (F2, Delete, Ctrl/Cmd+C/X/V). */
+.project-file-tree:focus {
+  outline: none;
+}
+
+.file-tree-row.selected {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.project-file-tree:focus .file-tree-row.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Waiting for a Paste to move it. */
+.file-tree-row.cut {
+  opacity: 0.5;
+}
+
+/* Files dragged in from the OS file manager land here. */
+.file-tree-row.drop-target,
+.project-file-tree.drop-target {
+  background: var(--bg-hover);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
+/* An operation (upload, download, paste) is running. */
+.file-tree-busy,
+.file-tree-busy .file-tree-row {
+  cursor: progress;
+}
+
 .file-tree-chevron {
   display: inline-flex;
   align-items: center;

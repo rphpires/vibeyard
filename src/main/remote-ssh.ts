@@ -458,13 +458,34 @@ if cmd and '.vibeyard' not in cmd:
 // SSH process helpers
 // ---------------------------------------------------------------------------
 
-export function resolveSshBinary(): string {
-  if (isWin) {
-    const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe');
-    if (fs.existsSync(sys32)) return sys32;
-    return 'ssh.exe';
+const systemBinaries = new Map<string, string>();
+
+/**
+ * A command that ships with the OS: on Windows the copy under System32
+ * (`winSubdir` of it) when present, else `<name>.exe` from PATH; elsewhere
+ * `name` from PATH. Memoized.
+ */
+export function resolveSystemBinary(name: string, winSubdir = ''): string {
+  let bin = systemBinaries.get(name);
+  if (!bin) {
+    if (isWin) {
+      const sys32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', winSubdir, `${name}.exe`);
+      bin = fs.existsSync(sys32) ? sys32 : `${name}.exe`;
+    } else {
+      bin = name;
+    }
+    systemBinaries.set(name, bin);
   }
-  return 'ssh';
+  return bin;
+}
+
+export function resolveSshBinary(): string {
+  return resolveSystemBinary('ssh', 'OpenSSH');
+}
+
+/** The message of a failed ssh call: its last stderr line, else the exit code. */
+export function sshFailure(res: { code: number | null; stderr: string }): string {
+  return res.stderr.trim().split('\n').pop() || `ssh exited with code ${res.code}`;
 }
 
 /** Cap on one ssh command's stdout (a directory listing is far below it). */
@@ -472,15 +493,20 @@ const MAX_SSH_STDOUT_BYTES = 16 * 1024 * 1024;
 /** Only the tail of stderr is ever shown, in an error message. */
 const MAX_SSH_STDERR_CHARS = 64 * 1024;
 
-const BATCH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=30'];
+export const BATCH_OPTS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=30'];
 
 /**
- * Run one command on `host`. Output is collected as bytes and decoded once at
- * the end, so a multi-byte UTF-8 character split across chunks survives. Past
- * `MAX_SSH_STDOUT_BYTES` the process is killed and the call fails: the host is
- * a trust boundary and must not be able to grow main-process memory unbounded.
+ * Run one command on `host`, collecting stdout as bytes. Past `maxStdoutBytes`
+ * (default `MAX_SSH_STDOUT_BYTES`) the process is killed and the call fails:
+ * the host is a trust boundary and must not be able to grow main-process
+ * memory unbounded.
  */
-function runSsh(host: string, remoteCmd: string, stdin?: string, timeoutMs = 30_000): Promise<{ code: number; stdout: string; stderr: string }> {
+export function runSshRaw(
+  host: string,
+  remoteCmd: string,
+  opts: { stdin?: string | Buffer; timeoutMs?: number; maxStdoutBytes?: number } = {},
+): Promise<{ code: number; stdout: Buffer; stderr: string }> {
+  const { stdin, timeoutMs = 30_000, maxStdoutBytes = MAX_SSH_STDOUT_BYTES } = opts;
   return new Promise((resolve) => {
     const child = spawn(resolveSshBinary(), [...BATCH_OPTS, host, remoteCmd], { windowsHide: true });
     const out: Buffer[] = [];
@@ -491,7 +517,7 @@ function runSsh(host: string, remoteCmd: string, stdin?: string, timeoutMs = 30_
     child.stdout.on('data', (d: Buffer) => {
       if (overflow) return;
       outBytes += d.length;
-      if (outBytes > MAX_SSH_STDOUT_BYTES) {
+      if (outBytes > maxStdoutBytes) {
         overflow = true;
         child.kill();
         return;
@@ -499,19 +525,26 @@ function runSsh(host: string, remoteCmd: string, stdin?: string, timeoutMs = 30_
       out.push(d);
     });
     child.stderr.on('data', (d) => { if (stderr.length < MAX_SSH_STDERR_CHARS) stderr += d.toString(); });
-    const stdout = () => Buffer.concat(out).toString('utf-8');
+    // A remote command that exits without reading all of stdin is reported by its exit code.
+    child.stdin.on('error', () => {});
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolve({ code: -1, stdout: stdout(), stderr: stderr || String(err) });
+      resolve({ code: -1, stdout: Buffer.concat(out), stderr: stderr || String(err) });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (overflow) resolve({ code: -1, stdout: '', stderr: `output exceeded ${MAX_SSH_STDOUT_BYTES} bytes` });
-      else resolve({ code: code ?? -1, stdout: stdout(), stderr });
+      if (overflow) resolve({ code: -1, stdout: Buffer.alloc(0), stderr: `output exceeded ${maxStdoutBytes} bytes` });
+      else resolve({ code: code ?? -1, stdout: Buffer.concat(out), stderr });
     });
     if (stdin !== undefined) child.stdin.end(stdin);
     else child.stdin.end();
   });
+}
+
+/** `runSshRaw` with stdout decoded as UTF-8 (once, so a character split across chunks survives). */
+export async function runSsh(host: string, remoteCmd: string, stdin?: string, timeoutMs = 30_000): Promise<{ code: number; stdout: string; stderr: string }> {
+  const res = await runSshRaw(host, remoteCmd, { stdin, timeoutMs });
+  return { ...res, stdout: res.stdout.toString('utf-8') };
 }
 
 /**
@@ -533,10 +566,7 @@ export async function stageRemoteEnv(info: RemoteInfo, sessionId: string, env: R
 export async function resolveRemoteDir(host: string, remotePath: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   if (!isValidSshHost(host)) return { ok: false, error: `invalid SSH host: ${host}` };
   const res = await runSsh(host, `cd ${shQuotePath(remotePath)} && pwd`);
-  if (res.code !== 0) {
-    const msg = res.stderr.trim().split('\n').pop() || `ssh exited with code ${res.code}`;
-    return { ok: false, error: msg };
-  }
+  if (res.code !== 0) return { ok: false, error: sshFailure(res) };
   const abs = res.stdout.trim().split('\n').pop() || '';
   return abs ? { ok: true, path: abs } : { ok: false, error: 'empty path from remote' };
 }

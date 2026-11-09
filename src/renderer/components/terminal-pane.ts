@@ -12,7 +12,7 @@ import { getProviderCapabilities } from '../provider-availability.js';
 import { appState } from '../state.js';
 import { FilePathLinkProvider, GithubLinkProvider } from './terminal-link-provider.js';
 import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, wrapBracketedPaste } from './terminal-utils.js';
-import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE } from '../drag-types.js';
+import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE, droppedFilePaths } from '../drag-types.js';
 import { showTerminalContextMenu } from './terminal-context-menu.js';
 
 interface TerminalInstance {
@@ -277,12 +277,7 @@ function collectDroppedPaths(dt: DataTransfer | null): string[] {
   if (!dt) return [];
   const internal = dt.getData(FILE_PATH_DRAG_TYPE);
   if (internal) return [internal];
-  const paths: string[] = [];
-  for (const file of dt.files) {
-    const path = window.vibeyard.fs.getDroppedFilePath(file);
-    if (path) paths.push(path);
-  }
-  return paths;
+  return droppedFilePaths(dt);
 }
 
 export function injectTextIntoRunningSession(sessionId: string, text: string): boolean {

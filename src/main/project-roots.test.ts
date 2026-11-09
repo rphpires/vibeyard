@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
-import { knownProjectRoots, isWithinRoots } from './project-roots';
+import { knownProjectRoots, isWithinRoots, knownRemoteRoots, isWithinRemoteRoots } from './project-roots';
 
 describe('knownProjectRoots', () => {
   it('includes local project paths and local ad-hoc session folders', () => {
@@ -38,5 +38,32 @@ describe('isWithinRoots', () => {
 
   it('rejects everything when there are no roots (Temporary project only)', () => {
     expect(isWithinRoots(path.resolve('/etc/passwd'), knownProjectRoots([{ path: '' }]))).toBe(false);
+  });
+});
+
+describe('knownRemoteRoots / isWithinRemoteRoots', () => {
+  const projects = [
+    { path: '/srv/app/', remoteHost: 'box' },
+    { path: '/home/me/other', remoteHost: 'elsewhere' },
+    { path: '/local/repo' },
+  ];
+
+  it('lists only that host\'s project folders, normalized', () => {
+    expect(knownRemoteRoots(projects, 'box')).toEqual(['/srv/app']);
+  });
+
+  it('admits paths inside a root, not beside it or climbing out', () => {
+    const roots = knownRemoteRoots(projects, 'box');
+    expect(isWithinRemoteRoots('/srv/app/src/a.ts', roots)).toBe(true);
+    expect(isWithinRemoteRoots('/srv/app', roots)).toBe(true);
+    expect(isWithinRemoteRoots('/srv/apple', roots)).toBe(false);
+    expect(isWithinRemoteRoots('/srv/app/../etc/passwd', roots)).toBe(false);
+    expect(isWithinRemoteRoots('srv/app/a', roots)).toBe(false);
+  });
+
+  it('strict mode refuses the root itself', () => {
+    const roots = knownRemoteRoots(projects, 'box');
+    expect(isWithinRemoteRoots('/srv/app', roots, true)).toBe(false);
+    expect(isWithinRemoteRoots('/srv/app/src', roots, true)).toBe(true);
   });
 });
