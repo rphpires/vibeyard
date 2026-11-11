@@ -10,6 +10,7 @@ class FakeTerminal {
   loadAddon(): void {}
   onData(): void {}
   onSelectionChange(): void {}
+  parser = { registerOscHandler: () => ({ dispose() {} }) };
   open(): void {}
   write(): void {}
   dispose(): void {}

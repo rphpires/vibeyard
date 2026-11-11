@@ -6,7 +6,7 @@ import { getTerminalTheme } from '../terminal-theme.js';
 import { FitAddon } from '@xterm/addon-fit';
 import type { ShareMode } from '../../shared/sharing-types.js';
 import { appState } from '../state.js';
-import { attachCopyOnSelect, loadWebglWithFallback, moveOpenedTerminal } from './terminal-utils.js';
+import { attachCopyOnSelect, attachOsc52Clipboard, loadWebglWithFallback, moveOpenedTerminal } from './terminal-utils.js';
 
 interface RemoteTerminalInstance {
   terminal: Terminal;
@@ -66,6 +66,7 @@ export function createRemoteTerminalPane(
     cols,
     rows,
   });
+  attachOsc52Clipboard(terminal);
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);

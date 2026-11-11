@@ -11,7 +11,7 @@ import type { ProviderId } from '../types.js';
 import { getProviderCapabilities } from '../provider-availability.js';
 import { appState } from '../state.js';
 import { FilePathLinkProvider, GithubLinkProvider } from './terminal-link-provider.js';
-import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, moveOpenedTerminal, wrapBracketedPaste } from './terminal-utils.js';
+import { attachClipboardCopyHandler, attachCopyOnSelect, attachOsc52Clipboard, collapseArmedTextareaOnContextMenu, loadWebglWithFallback, moveOpenedTerminal, wrapBracketedPaste } from './terminal-utils.js';
 import type { WebglAddon } from '@xterm/addon-webgl';
 import { FILE_PATH_DRAG_TYPE, NATIVE_FILES_DRAG_TYPE, droppedFilePaths } from '../drag-types.js';
 import { showTerminalContextMenu } from './terminal-context-menu.js';
@@ -110,6 +110,7 @@ export function createTerminalPane(
       },
     },
   });
+  attachOsc52Clipboard(terminal);
 
   const fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);

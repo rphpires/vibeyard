@@ -38,7 +38,7 @@ vi.mock('@xterm/addon-webgl', () => ({
   },
 }));
 
-import { attachClipboardCopyHandler, attachCopyOnSelect, collapseArmedTextareaOnContextMenu, loadWebglWithFallback } from './terminal-utils.js';
+import { MAX_OSC52_BYTES, attachClipboardCopyHandler, attachCopyOnSelect, attachOsc52Clipboard, collapseArmedTextareaOnContextMenu, decodeOsc52, loadWebglWithFallback } from './terminal-utils.js';
 
 const mockClipboardWrite = vi.fn().mockResolvedValue(undefined);
 const mockClipboardRead = vi.fn();
@@ -469,5 +469,68 @@ describe('collapseArmedTextareaOnContextMenu', () => {
 
   it('is a no-op for a terminal that was never opened', () => {
     expect(() => collapseArmedTextareaOnContextMenu(new FakeTerminal() as any)).not.toThrow();
+  });
+});
+
+const b64 = (text: string) => Buffer.from(text, 'utf-8').toString('base64');
+
+describe('decodeOsc52', () => {
+  it('decodes a clipboard write', () => {
+    expect(decodeOsc52(`c;${b64('hello world')}`)).toBe('hello world');
+  });
+
+  it('decodes UTF-8 (non-latin) text', () => {
+    expect(decodeOsc52(`c;${b64('ação 日本語 🙂')}`)).toBe('ação 日本語 🙂');
+  });
+
+  it('accepts an empty target list', () => {
+    expect(decodeOsc52(`;${b64('x')}`)).toBe('x');
+  });
+
+  it('ignores read requests', () => {
+    expect(decodeOsc52('c;?')).toBeNull();
+  });
+
+  it('ignores clear requests and missing separators', () => {
+    expect(decodeOsc52('c;')).toBeNull();
+    expect(decodeOsc52(b64('x'))).toBeNull();
+  });
+
+  it('ignores malformed base64 and invalid UTF-8', () => {
+    expect(decodeOsc52('c;@@@not base64@@@')).toBeNull();
+    expect(decodeOsc52(`c;${Buffer.from([0xff, 0xfe]).toString('base64')}`)).toBeNull();
+  });
+
+  it('ignores an oversized payload', () => {
+    expect(decodeOsc52(`c;${b64('a'.repeat(MAX_OSC52_BYTES + 3))}`)).toBeNull();
+  });
+});
+
+describe('attachOsc52Clipboard', () => {
+  function attach() {
+    let handler: ((data: string) => boolean) | null = null;
+    const terminal = {
+      parser: {
+        registerOscHandler: vi.fn((ident: number, cb: (data: string) => boolean) => {
+          expect(ident).toBe(52);
+          handler = cb;
+          return { dispose() {} };
+        }),
+      },
+    };
+    attachOsc52Clipboard(terminal as any);
+    return (data: string) => handler!(data);
+  }
+
+  it('writes the decoded text to the clipboard through the main process', () => {
+    const fire = attach();
+    expect(fire(`c;${b64('copied by the CLI')}`)).toBe(true);
+    expect(mockVibeyardClipboardWrite).toHaveBeenCalledWith('copied by the CLI', 'explicit');
+  });
+
+  it('never writes for a read request', () => {
+    const fire = attach();
+    expect(fire('c;?')).toBe(true);
+    expect(mockVibeyardClipboardWrite).not.toHaveBeenCalled();
   });
 });

@@ -26,6 +26,7 @@ class FakeTerminal {
   getSelection(): string { return this._selection; }
   setSelection(s: string): void { this._selection = s; }
   onSelectionChange(_listener: () => void): { dispose(): void } { return { dispose() {} }; }
+  parser = { registerOscHandler: () => ({ dispose() {} }) };
   onData(_cb: (data: string) => void): void {}
   open(): void {}
   write(): void {}

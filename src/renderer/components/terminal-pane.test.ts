@@ -37,6 +37,7 @@ class FakeTerminal {
   onData(cb: (data: string) => void): void { this.dataHandlers.push(cb); }
   onKey(cb: (e: { key: string; domEvent: KeyboardEvent }) => void): void { this.keyHandlers.push(cb); }
   onSelectionChange(): void {}
+  parser = { registerOscHandler: () => ({ dispose() {} }) };
   open(): void {}
   write(): void {}
   focus(): void { this.focusCount++; }

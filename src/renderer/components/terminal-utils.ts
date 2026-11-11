@@ -55,6 +55,46 @@ export function attachCopyOnSelect(terminal: Terminal): void {
   });
 }
 
+// Cap on a decoded OSC 52 payload, so a program cannot push an unbounded string
+// through IPC into the OS clipboard.
+export const MAX_OSC52_BYTES = 1024 * 1024;
+
+/**
+ * Decode the payload of an OSC 52 set-clipboard request (`<targets>;<base64>`).
+ * Returns null for anything that is not a write: a read request (`?`) — never
+ * answered, it would let any program in the terminal read the clipboard — an
+ * empty payload (a "clear" request), malformed base64, or an oversized one.
+ */
+export function decodeOsc52(data: string): string | null {
+  const sep = data.indexOf(';');
+  if (sep < 0) return null;
+  const payload = data.slice(sep + 1);
+  if (payload === '?') return null;
+  if (payload.length > Math.ceil(MAX_OSC52_BYTES / 3) * 4) return null;
+  try {
+    const bin = atob(payload);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Honor OSC 52 clipboard writes. A program that turns on mouse tracking (Claude
+ * Code's fullscreen renderer, tmux, vim with mouse=a) receives the drag itself,
+ * so xterm never holds a selection — Ctrl+C has nothing to copy and the context
+ * menu's Copy is disabled. Such programs draw their own selection and hand the
+ * text to the terminal via OSC 52; without this handler it was dropped silently.
+ */
+export function attachOsc52Clipboard(terminal: Terminal): void {
+  terminal.parser.registerOscHandler(52, (data) => {
+    const text = decodeOsc52(data);
+    if (text) copyText(text);
+    return true;
+  });
+}
+
 /**
  * Call after terminal.open(). xterm's right-click handler parks the selection in
  * its hidden textarea and DOM-selects it so a native context-menu Copy can pick
