@@ -349,6 +349,10 @@ export function registerIpcHandlers(): void {
     if (source === 'selection' && isLinux) clipboard.writeText(text, 'selection');
   });
 
+  // Lists formats only; the image itself is never read (the CLI reads it).
+  ipcMain.handle('clipboard:hasImage', () =>
+    clipboard.availableFormats().some((format) => format.startsWith('image/')));
+
   ipcMain.handle('provider:getConfig', async (_event, providerId: ProviderId, projectPath: string) => {
     const provider = getProvider(providerId);
     return provider.getConfig(projectPath);

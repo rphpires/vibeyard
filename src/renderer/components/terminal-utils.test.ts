@@ -43,6 +43,7 @@ import { MAX_OSC52_BYTES, attachClipboardCopyHandler, attachCopyOnSelect, attach
 const mockClipboardWrite = vi.fn().mockResolvedValue(undefined);
 const mockClipboardRead = vi.fn();
 const mockVibeyardClipboardWrite = vi.fn().mockResolvedValue(undefined);
+const mockClipboardHasImage = vi.fn().mockResolvedValue(false);
 
 class FakeTerminal {
   private keyHandler: ((e: KeyboardEvent) => boolean) | null = null;
@@ -95,9 +96,10 @@ function stubPlatform(platform: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockClipboardRead.mockResolvedValue('');
+  mockClipboardHasImage.mockResolvedValue(false);
   mockMatchesAnyShortcut.mockReturnValue(false);
   mockPreferences.copyOnSelect = false;
-  vi.stubGlobal('window', { vibeyard: { clipboard: { write: mockVibeyardClipboardWrite } } });
+  vi.stubGlobal('window', { vibeyard: { clipboard: { write: mockVibeyardClipboardWrite, hasImage: mockClipboardHasImage } } });
 });
 
 describe('attachClipboardCopyHandler (macOS)', () => {
@@ -309,6 +311,47 @@ describe('attachClipboardCopyHandler (Windows)', () => {
 
     await Promise.resolve();
     expect(writeToPty).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+V with an image-only clipboard calls onImagePaste', async () => {
+    const terminal = new FakeTerminal();
+    const writeToPty = vi.fn();
+    const onImagePaste = vi.fn();
+    mockClipboardHasImage.mockResolvedValue(true);
+    attachClipboardCopyHandler(terminal as any, undefined, writeToPty, onImagePaste);
+
+    terminal.simulateKey({ ctrlKey: true, key: 'v', type: 'keydown', preventDefault: vi.fn() });
+
+    await vi.waitFor(() => expect(onImagePaste).toHaveBeenCalledTimes(1));
+    expect(writeToPty).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+V prefers text over an image and skips the image check', async () => {
+    const terminal = new FakeTerminal();
+    const writeToPty = vi.fn();
+    const onImagePaste = vi.fn();
+    mockClipboardRead.mockResolvedValue('text');
+    mockClipboardHasImage.mockResolvedValue(true);
+    attachClipboardCopyHandler(terminal as any, undefined, writeToPty, onImagePaste);
+
+    terminal.simulateKey({ ctrlKey: true, key: 'v', type: 'keydown', preventDefault: vi.fn() });
+
+    await vi.waitFor(() => expect(writeToPty).toHaveBeenCalledWith('text'));
+    expect(mockClipboardHasImage).not.toHaveBeenCalled();
+    expect(onImagePaste).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+V with an empty, non-image clipboard does not call onImagePaste', async () => {
+    const terminal = new FakeTerminal();
+    const onImagePaste = vi.fn();
+    mockClipboardHasImage.mockResolvedValue(false);
+    attachClipboardCopyHandler(terminal as any, undefined, vi.fn(), onImagePaste);
+
+    terminal.simulateKey({ ctrlKey: true, key: 'v', type: 'keydown', preventDefault: vi.fn() });
+
+    await vi.waitFor(() => expect(mockClipboardHasImage).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(onImagePaste).not.toHaveBeenCalled();
   });
 
   it('Ctrl+V without writeToPty falls through to default', () => {

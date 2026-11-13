@@ -65,6 +65,7 @@ describe('meta', () => {
     expect(caps.shiftEnterNewline).toBe(true);
     expect(caps.pendingPromptTrigger).toBe('startup-arg');
     expect(caps.planModeArg).toBe('--permission-mode plan');
+    expect(caps.clipboardImagePasteKey).toBe('v');
     expect(caps.systemPromptInjection).toBe(true);
   });
 

@@ -149,6 +149,7 @@ export interface VibeyardApi {
   };
   clipboard: {
     write(text: string, source?: ClipboardSource): Promise<void>;
+    hasImage(): Promise<boolean>;
   };
   menu: {
     onNewProject(callback: (source: ViewKind) => void): () => void;

@@ -31,6 +31,12 @@ export interface CliProviderCapabilities {
   shiftEnterNewline: boolean;
   pendingPromptTrigger: PendingPromptTrigger;
   planModeArg?: string;
+  /**
+   * Bytes that make the CLI paste an image from the OS clipboard itself. Sent on
+   * Ctrl+V (Windows) when the clipboard holds an image and no text. Unset = no
+   * image paste through Ctrl+V.
+   */
+  clipboardImagePasteKey?: string;
   systemPromptInjection: boolean;
 }
 

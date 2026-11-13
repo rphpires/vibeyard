@@ -59,6 +59,8 @@ export class ClaudeProvider implements CliProvider {
       shiftEnterNewline: true,
       pendingPromptTrigger: 'startup-arg',
       planModeArg: '--permission-mode plan',
+      // Claude Code's image-paste key on Windows is Alt+V (ESC v).
+      clipboardImagePasteKey: 'v',
       systemPromptInjection: true,
     },
     defaultContextWindowSize: 200_000,

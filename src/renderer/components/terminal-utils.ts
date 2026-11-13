@@ -126,11 +126,16 @@ export function collapseArmedTextareaOnContextMenu(terminal: Terminal): void {
  *
  * Pass `writeToPty` to enable Ctrl+V paste on Windows — it receives the
  * clipboard text and should forward it to the PTY.
+ *
+ * Pass `onImagePaste` to handle Ctrl+V when the clipboard holds an image and
+ * no text. The CLI reads images from the OS clipboard itself, so the handler
+ * only has to send the CLI's own image-paste key (Claude Code on Windows: Alt+V).
  */
 export function attachClipboardCopyHandler(
   terminal: Terminal,
   extend?: ExtraKeyHandler,
-  writeToPty?: (data: string) => void
+  writeToPty?: (data: string) => void,
+  onImagePaste?: () => void
 ): void {
   terminal.attachCustomKeyEventHandler((e) => {
     // Cmd/Ctrl+F: bubble to document for search
@@ -154,9 +159,12 @@ export function attachClipboardCopyHandler(
     // Windows: Ctrl+V → async paste clipboard to PTY
     if (isWin && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === 'v' && writeToPty) {
       if (e.type === 'keydown') {
-        clipboardFor(terminal).readText().then((text) => {
-          if (!text) return;
-          writeToPty(wrapBracketedPaste(terminal, text));
+        clipboardFor(terminal).readText().then(async (text) => {
+          if (text) {
+            writeToPty(wrapBracketedPaste(terminal, text));
+          } else if (onImagePaste && await window.vibeyard.clipboard.hasImage()) {
+            onImagePaste();
+          }
         }).catch(() => {});
       }
       e.preventDefault(); // prevent native paste event from firing

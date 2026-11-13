@@ -191,6 +191,7 @@ export interface VibeyardApi {
   };
   clipboard: {
     write(text: string, source?: ClipboardSource): Promise<void>;
+    hasImage(): Promise<boolean>;
   };
   zoom: {
     set(factor: number): void;
@@ -431,6 +432,7 @@ const api: VibeyardApi = {
   },
   clipboard: {
     write: (text: string, source?: ClipboardSource) => ipcRenderer.invoke('clipboard:write', text, source),
+    hasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
   },
   zoom: {
     set: (factor: number) => {

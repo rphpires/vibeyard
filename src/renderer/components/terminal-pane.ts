@@ -125,6 +125,11 @@ export function createTerminalPane(
   }));
 
   const writeToPty = (data: string) => window.vibeyard.pty.write(sessionId, data);
+  // Ctrl+V with an image in the clipboard: send the CLI's own image-paste key so
+  // it reads the image from the OS clipboard itself. A remote session's CLI would
+  // read the host's clipboard instead, so it is skipped.
+  const imagePasteKey = remoteHost ? undefined : caps?.clipboardImagePasteKey;
+  const onImagePaste = imagePasteKey ? () => writeToPty(imagePasteKey) : undefined;
 
   // Send CSI u encoding for Shift+Enter so Claude CLI treats it as newline
   attachClipboardCopyHandler(terminal, (e) => {
@@ -133,7 +138,7 @@ export function createTerminalPane(
       e.preventDefault();
       return false;
     }
-  }, writeToPty);
+  }, writeToPty, onImagePaste);
 
   const instance: TerminalInstance = {
     terminal,
