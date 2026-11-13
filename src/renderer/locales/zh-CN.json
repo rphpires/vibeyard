@@ -207,6 +207,14 @@
     "addTagButtonLabel": "+",
     "addTagTooltip": "添加标签",
     "filterCount": "{filtered}/{total} 个任务",
+    "priorityFilterTooltip": "按优先级筛选",
+    "priority": {
+      "none": "无优先级",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "urgent": "紧急"
+    },
     "tagColorOption": "● {color}",
     "tagInputPlaceholder": "标签名…",
     "deleteTagConfirmWithTasks": "确定删除标签「{name}」？这会将其从 {count} 个任务中移除。",
@@ -260,6 +268,7 @@
       "planModeLabel": "计划模式",
       "titleRequired": "标题不能为空",
       "tagsLabel": "标签",
+      "priorityLabel": "优先级",
       "tagInputPlaceholder": "添加标签…",
       "providerLabel": "提供方",
       "planModeUnsupportedTooltip": "该提供方不支持计划模式",

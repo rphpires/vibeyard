@@ -468,6 +468,23 @@
   transition: opacity 0.15s;
 }
 
+.board-priority-filter {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.board-tag-row-separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.board-card-priority {
+  flex-shrink: 0;
+}
+
 .tag-pill-header:hover {
   opacity: 0.8;
 }

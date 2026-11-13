@@ -1,9 +1,10 @@
-import type { BoardTask } from '../shared/types.js';
+import type { BoardTask, TaskPriority } from '../shared/types.js';
 
 type FilterChangeCallback = () => void;
 
 let searchQuery = '';
 let activeTags: Set<string> = new Set();
+const activePriorities: Set<TaskPriority> = new Set();
 const listeners: FilterChangeCallback[] = [];
 
 export function setSearchQuery(query: string): void {
@@ -35,14 +36,32 @@ export function getActiveTagFilters(): ReadonlySet<string> {
   return activeTags;
 }
 
+export function togglePriorityFilter(priority: TaskPriority): void {
+  if (activePriorities.has(priority)) {
+    activePriorities.delete(priority);
+  } else {
+    activePriorities.add(priority);
+  }
+  notify();
+}
+
+export function isPriorityFilterActive(priority: TaskPriority): boolean {
+  return activePriorities.has(priority);
+}
+
+export function getActivePriorityFilters(): ReadonlySet<TaskPriority> {
+  return activePriorities;
+}
+
 export function clearFilters(): void {
   searchQuery = '';
   activeTags.clear();
+  activePriorities.clear();
   notify();
 }
 
 export function hasActiveFilters(): boolean {
-  return searchQuery !== '' || activeTags.size > 0;
+  return searchQuery !== '' || activeTags.size > 0 || activePriorities.size > 0;
 }
 
 export function matchesFilter(task: BoardTask): boolean {
@@ -55,6 +74,11 @@ export function matchesFilter(task: BoardTask): boolean {
     if (!task.tags || task.tags.length === 0) return false;
     const hasMatch = task.tags.some(t => activeTags.has(t));
     if (!hasMatch) return false;
+  }
+
+  // Priorities OR together; combined with search and tags by AND.
+  if (activePriorities.size > 0) {
+    if (!task.priority || !activePriorities.has(task.priority)) return false;
   }
 
   return true;

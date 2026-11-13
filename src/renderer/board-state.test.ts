@@ -86,6 +86,11 @@ describe('board-state', () => {
       expect(task!.prompt).toBe('Do something');
     });
 
+    it('stores priority only when given', () => {
+      expect(addTask({ title: 'P', prompt: 'p', priority: 'urgent' })!.priority).toBe('urgent');
+      expect('priority' in addTask({ title: 'N', prompt: 'p' })!).toBe(false);
+    });
+
     it('auto-assigns order as max+1 in target column', () => {
       addTask({ title: 'First', prompt: 'a' });
       const second = addTask({ title: 'Second', prompt: 'b' });

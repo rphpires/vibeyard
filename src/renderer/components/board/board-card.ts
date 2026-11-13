@@ -11,6 +11,7 @@ import { showConfirmModal } from '../modal.js';
 import { setPendingPrompt } from '../terminal-pane.js';
 import { t } from '../../i18n.js';
 import { revealSession } from '../../reveal.js';
+import { createPriorityPill } from '../../board-priority.js';
 
 export function statusLabel(status: SessionStatus): string {
   switch (status) {
@@ -56,6 +57,10 @@ export function createCardElement(task: BoardTask): HTMLElement {
     e.stopPropagation();
     runTask(task);
   });
+
+  if (task.priority) {
+    topRow.appendChild(createPriorityPill(task.priority, 'tag-pill-sm board-card-priority'));
+  }
 
   topRow.appendChild(titleEl);
   topRow.appendChild(runBtn);

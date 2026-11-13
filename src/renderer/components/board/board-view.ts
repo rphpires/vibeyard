@@ -8,10 +8,12 @@ import { showContextMenu } from './board-context-menu.js';
 import { showBoardHelpDialog } from './board-help-dialog.js';
 import { t } from '../../i18n.js';
 import { instances as kanbanInstances } from '../kanban/instance.js';
-import type { BoardColumn, TagDefinition, BoardData } from '../../../shared/types.js';
+import { TASK_PRIORITIES, type BoardColumn, type TagDefinition, type BoardData, type TaskPriority } from '../../../shared/types.js';
+import { createPriorityPill } from '../../board-priority.js';
 import {
   setSearchQuery, getSearchQuery, toggleTagFilter, isTagFilterActive,
   hasActiveFilters, getFilteredTasks, onFilterChange, getActiveTagFilters,
+  togglePriorityFilter, isPriorityFilterActive, getActivePriorityFilters,
 } from '../../board-filter.js';
 import { onChange as onStatusChange } from '../../session-activity.js';
 import { onChange as onCostChange, getCost } from '../../session-cost.js';
@@ -228,12 +230,25 @@ function renderTagRow(container: HTMLElement, board: BoardData): void {
   container.innerHTML = '';
   container.style.display = '';
 
+  const label = document.createElement('span');
+  label.className = 'board-tag-row-label';
+  label.textContent = t('board.filterLabel');
+  container.appendChild(label);
+
+  // Priorities (always shown — the set is fixed)
+  const priorityPills = document.createElement('div');
+  priorityPills.className = 'board-priority-filter';
+  priorityPills.title = t('board.priorityFilterTooltip');
+  for (const priority of TASK_PRIORITIES) {
+    priorityPills.appendChild(createPriorityRowPill(priority));
+  }
+  container.appendChild(priorityPills);
+
   // Tags (only if tags exist)
   if (board.tags && board.tags.length > 0) {
-    const label = document.createElement('span');
-    label.className = 'board-tag-row-label';
-    label.textContent = t('board.filterLabel');
-    container.appendChild(label);
+    const separator = document.createElement('span');
+    separator.className = 'board-tag-row-separator';
+    container.appendChild(separator);
 
     const pillsContainer = document.createElement('div');
     pillsContainer.className = 'board-tag-row-pills';
@@ -292,6 +307,17 @@ function renderTagRow(container: HTMLElement, board: BoardData): void {
     countEl.textContent = t('board.filterCount', { filtered, total });
     container.appendChild(countEl);
   }
+}
+
+function createPriorityRowPill(priority: TaskPriority): HTMLElement {
+  const pill = createPriorityPill(priority, 'tag-pill-header');
+
+  if (getActivePriorityFilters().size > 0 && !isPriorityFilterActive(priority)) {
+    pill.classList.add('inactive');
+  }
+
+  pill.addEventListener('click', () => togglePriorityFilter(priority));
+  return pill;
 }
 
 function createTagRowPill(tag: TagDefinition): HTMLElement {

@@ -1,4 +1,4 @@
-import type { BoardTask, ProviderId } from '../../../shared/types.js';
+import { TASK_PRIORITIES, isTaskPriority, type BoardTask, type ProviderId } from '../../../shared/types.js';
 import { addTask, updateTask, getBoard, addTag, getTagColor } from '../../board-state.js';
 import { showModal, closeModal, setModalError, registerModalCleanup, type FieldDef } from '../modal.js';
 import { createCustomSelect, type CustomSelectInstance } from '../custom-select.js';
@@ -11,6 +11,7 @@ import {
 import { appState } from '../../state.js';
 import { runTask } from './board-card.js';
 import { t } from '../../i18n.js';
+import { priorityLabel } from '../../board-priority.js';
 
 export interface TaskModalPrefill {
   title?: string;
@@ -56,6 +57,16 @@ export function showTaskModal(
       defaultValue: task?.notes ?? prefill?.notes ?? '',
       rows: 3,
     },
+    {
+      label: t('board.taskModal.priorityLabel'),
+      id: 'priority',
+      type: 'select',
+      options: [
+        { value: '', label: t('board.priority.none') },
+        ...TASK_PRIORITIES.map(p => ({ value: p, label: priorityLabel(p) })),
+      ],
+      defaultValue: task?.priority ?? '',
+    },
   ];
 
   if (mode === 'edit') {
@@ -97,6 +108,7 @@ export function showTaskModal(
     }
 
     const notes = values.notes?.trim() ?? '';
+    const priority = isTaskPriority(values.priority) ? values.priority : undefined;
 
     // Ensure all tags are in the palette (assigns colors)
     for (const t of currentTags) addTag(t);
@@ -111,6 +123,7 @@ export function showTaskModal(
         notes: notes || undefined,
         columnId: targetColumnId,
         tags: currentTags.length > 0 ? currentTags : undefined,
+        priority,
         providerId: currentProviderId,
         profileId: currentProfileId || undefined,
         planMode,
@@ -121,6 +134,7 @@ export function showTaskModal(
         prompt,
         notes: notes || undefined,
         tags: currentTags.length > 0 ? currentTags : undefined,
+        priority,
         providerId: currentProviderId,
         profileId: currentProfileId || undefined,
         planMode,
@@ -374,6 +388,7 @@ export function showTaskModal(
         const taskTitle = (document.getElementById('modal-taskTitle') as HTMLInputElement)?.value?.trim() ?? '';
         const notes = (document.getElementById('modal-notes') as HTMLTextAreaElement)?.value?.trim() ?? '';
         const columnId = (document.getElementById('modal-columnId') as HTMLInputElement)?.value;
+        const priorityValue = (document.getElementById('modal-priority') as HTMLInputElement)?.value;
 
         for (const t of currentTags) addTag(t);
         const planMode = planModeCheckbox.checked;
@@ -382,6 +397,7 @@ export function showTaskModal(
           prompt: prompt || task.prompt,
           notes: notes || undefined,
           tags: currentTags.length > 0 ? currentTags : undefined,
+          priority: isTaskPriority(priorityValue) ? priorityValue : undefined,
           providerId: currentProviderId,
           profileId: currentProfileId || undefined,
           planMode,

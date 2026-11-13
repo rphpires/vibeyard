@@ -350,3 +350,27 @@ describe('createCardElement provider icon', () => {
     expect(icon!.src).toBe('assets/providers/copilot.png');
   });
 });
+
+describe('createCardElement priority badge', () => {
+  function topRowOf(card: HTMLElement): StubEl {
+    return (card as unknown as StubEl).children[0];
+  }
+
+  it('renders a colored badge before the title when the task has a priority', () => {
+    const task = addTask({ title: 'Fix', prompt: 'p', priority: 'high' })!;
+    const top = topRowOf(createCardElement(task));
+    const idx = top.children.findIndex(c => c.className.includes('board-card-priority'));
+    expect(idx).toBeGreaterThanOrEqual(0);
+    const badge = top.children[idx];
+    expect(badge.dataset.priority).toBe('high');
+    expect(badge.dataset.color).toBe('amber');
+    expect(badge.textContent).toBe('High');
+    expect(top.children[idx + 1].className).toBe('board-card-title');
+  });
+
+  it('renders no badge when the task has no priority', () => {
+    const task = addTask({ title: 'Fix', prompt: 'p' })!;
+    const top = topRowOf(createCardElement(task));
+    expect(top.children.some(c => c.className.includes('board-card-priority'))).toBe(false);
+  });
+});

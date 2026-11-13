@@ -4,7 +4,7 @@ vi.mock('../session-cost.js', () => ({ restoreCost: vi.fn() }));
 vi.mock('../session-context.js', () => ({ restoreContext: vi.fn() }));
 
 import { ensureProjectDefaults, serializeForSave } from './persistence.js';
-import type { PersistedState, SessionRecord } from '../../shared/types.js';
+import type { BoardTask, PersistedState, SessionRecord } from '../../shared/types.js';
 
 function baseState(session: Partial<SessionRecord>): PersistedState {
   return {
@@ -60,5 +60,17 @@ describe("ensureProjectDefaults: project color", () => {
     ensureProjectDefaults(state);
     expect(state.projects[0].color).toBe(expected);
     if (expected === undefined) expect('color' in state.projects[0]).toBe(false);
+  });
+});
+
+describe('ensureProjectDefaults: task priority', () => {
+  it.each([['high', 'high'], ['bogus', undefined], [undefined, undefined]])('normalizes %j to %j', (input, expected) => {
+    const state = baseState({});
+    const task = { id: 't', title: 'T', prompt: '', columnId: 'c', order: 0, createdAt: 0, updatedAt: 0 } as BoardTask;
+    if (input !== undefined) (task as unknown as { priority: string }).priority = input;
+    state.projects[0].board = { columns: [], tasks: [task] };
+    ensureProjectDefaults(state);
+    expect(task.priority).toBe(expected);
+    if (expected === undefined) expect('priority' in task).toBe(false);
   });
 });

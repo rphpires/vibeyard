@@ -1,4 +1,4 @@
-import type { BoardColumn, BoardData, PersistedState, Preferences, ProjectRecord, SessionRecord } from '../../shared/types.js';
+import { isTaskPriority, type BoardColumn, type BoardData, type PersistedState, type Preferences, type ProjectRecord, type SessionRecord } from '../../shared/types.js';
 import { restoreCost } from '../session-cost.js';
 import { restoreContext } from '../session-context.js';
 import { buildKanbanSession } from './session-factory.js';
@@ -49,7 +49,11 @@ export function ensureProjectDefaults(state: PersistedState): void {
     const color = normalizeProjectColor(project.color);
     if (color) project.color = color;
     else delete project.color;
-    for (const task of project.board.tasks) task.sessionId = undefined;
+    for (const task of project.board.tasks) {
+      task.sessionId = undefined;
+      // Renderers trust task.priority to be a known level; drop anything else.
+      if (task.priority !== undefined && !isTaskPriority(task.priority)) delete task.priority;
+    }
 
     const legacyMode = (project.layout as { mode: string }).mode;
     if (legacyMode === 'board') {

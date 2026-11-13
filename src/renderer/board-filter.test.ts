@@ -3,6 +3,7 @@ import type { BoardTask } from '../shared/types';
 import {
   setSearchQuery, getSearchQuery, toggleTagFilter, isTagFilterActive,
   hasActiveFilters, matchesFilter, getFilteredTasks, clearFilters,
+  togglePriorityFilter, isPriorityFilterActive,
 } from './board-filter';
 
 function makeTask(overrides: Partial<BoardTask> = {}): BoardTask {
@@ -116,5 +117,45 @@ describe('hasActiveFilters', () => {
     toggleTagFilter('bug');
     clearFilters();
     expect(hasActiveFilters()).toBe(false);
+  });
+});
+
+describe('priority filter', () => {
+  it('matches only tasks with a selected priority', () => {
+    togglePriorityFilter('high');
+    expect(matchesFilter(makeTask({ priority: 'high' }))).toBe(true);
+    expect(matchesFilter(makeTask({ priority: 'low' }))).toBe(false);
+    expect(matchesFilter(makeTask())).toBe(false);
+  });
+
+  it('ORs multiple selected priorities', () => {
+    togglePriorityFilter('high');
+    togglePriorityFilter('urgent');
+    expect(matchesFilter(makeTask({ priority: 'urgent' }))).toBe(true);
+    expect(matchesFilter(makeTask({ priority: 'high' }))).toBe(true);
+    expect(matchesFilter(makeTask({ priority: 'medium' }))).toBe(false);
+  });
+
+  it('ANDs with tag filters', () => {
+    togglePriorityFilter('high');
+    toggleTagFilter('bug');
+    expect(matchesFilter(makeTask({ priority: 'high', tags: ['bug'] }))).toBe(true);
+    expect(matchesFilter(makeTask({ priority: 'high', tags: ['ui'] }))).toBe(false);
+    expect(matchesFilter(makeTask({ priority: 'low', tags: ['bug'] }))).toBe(false);
+  });
+
+  it('toggles off and counts as an active filter', () => {
+    togglePriorityFilter('low');
+    expect(isPriorityFilterActive('low')).toBe(true);
+    expect(hasActiveFilters()).toBe(true);
+    togglePriorityFilter('low');
+    expect(isPriorityFilterActive('low')).toBe(false);
+    expect(hasActiveFilters()).toBe(false);
+  });
+
+  it('is reset by clearFilters', () => {
+    togglePriorityFilter('urgent');
+    clearFilters();
+    expect(isPriorityFilterActive('urgent')).toBe(false);
   });
 });

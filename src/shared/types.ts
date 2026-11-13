@@ -261,6 +261,16 @@ export interface BoardColumn {
   locked?: boolean;
 }
 
+/** Kanban task priority. Unset = no priority. */
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+/** Highest first — the order used by the filter row and the task modal. */
+export const TASK_PRIORITIES: readonly TaskPriority[] = ['urgent', 'high', 'medium', 'low'];
+
+export function isTaskPriority(value: unknown): value is TaskPriority {
+  return typeof value === 'string' && (TASK_PRIORITIES as readonly string[]).includes(value);
+}
+
 export interface BoardTask {
   id: string;
   title: string;
@@ -275,6 +285,7 @@ export interface BoardTask {
   profileId?: string;
   planMode?: boolean;
   tags?: string[];
+  priority?: TaskPriority;
   createdAt: number;
   updatedAt: number;
 }

@@ -207,6 +207,14 @@
     "addTagButtonLabel": "+",
     "addTagTooltip": "Add tag",
     "filterCount": "{filtered}/{total} tasks",
+    "priorityFilterTooltip": "Filter by priority",
+    "priority": {
+      "none": "No priority",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "urgent": "Urgent"
+    },
     "tagColorOption": "● {color}",
     "tagInputPlaceholder": "Tag name...",
     "deleteTagConfirmWithTasks": "Delete tag \"{name}\"? This will remove it from {count} task(s).",
@@ -260,6 +268,7 @@
       "planModeLabel": "Plan mode",
       "titleRequired": "Title is required",
       "tagsLabel": "Tags",
+      "priorityLabel": "Priority",
       "tagInputPlaceholder": "Add tag...",
       "providerLabel": "Provider",
       "planModeUnsupportedTooltip": "Provider does not support plan mode",
