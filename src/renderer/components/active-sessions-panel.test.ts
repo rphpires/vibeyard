@@ -139,3 +139,25 @@ describe('resolveActiveStatuses', () => {
     expect([...set].sort()).toEqual(['waiting', 'working']);
   });
 });
+
+describe('selectActiveSessions current and project fields', () => {
+  it('flags the on-screen sessions as current', () => {
+    const projects = [project('p1', 'Alpha', [{ id: 'a' }, { id: 'b' }])];
+    const rows = selectActiveSessions(
+      projects,
+      statusMap({ a: 'working', b: 'working' }),
+      new Set<SessionStatus>(['working']),
+      true,
+      () => false,
+      new Set(['b']),
+    );
+    expect(rows.map((r) => [r.sessionId, r.current])).toEqual([['a', false], ['b', true]]);
+  });
+
+  it('carries the project color', () => {
+    const p = project('p1', 'Alpha', [{ id: 'a' }]);
+    p.color = '#3366ff';
+    const [row] = selectActiveSessions([p], statusMap({ a: 'working' }), new Set<SessionStatus>(['working']));
+    expect(row.projectColor).toBe('#3366ff');
+  });
+});

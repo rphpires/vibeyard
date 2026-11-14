@@ -24,6 +24,7 @@ import { ICON_KANBAN, ICON_TEAM, ICON_OVERVIEW, ICON_SESSIONS, ICON_FILES, ICON_
 import { revealProject } from '../reveal.js';
 import { getDetachedProjectId, onDetachedChange } from '../session-window-state.js';
 import { t } from '../i18n.js';
+import { projectDisplayName } from '../project-display-name.js';
 import { PROJECT_COLOR_PALETTE } from '../project-colors.js';
 
 type ProjectPanel = 'history' | 'files' | 'git' | null;
@@ -260,7 +261,7 @@ function buildProjectRow(project: ProjectRecord, isActive: boolean, opts: Render
   el.dataset.projectId = project.id;
   // The Temporary project is pinned last: not draggable, and not a drop target.
   el.draggable = !project.temporary;
-  const displayName = project.temporary ? t('sidebar.temporaryProject') : project.name;
+  const displayName = projectDisplayName(project);
   // Leading glyph: the active project shows an avatar initial; others show a
   // status dot reflecting their aggregate session activity.
   const lead = isActive

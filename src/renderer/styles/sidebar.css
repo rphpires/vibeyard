@@ -294,12 +294,38 @@
 
 .active-session-project {
   flex-shrink: 0;
-  max-width: 40%;
+  max-width: 45%;
+  padding: 1px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  background: var(--bg-tertiary);
   font-size: 10.5px;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Project card color (ProjectRecord.color), mixed into the surface like the card tint. */
+.active-session-project.has-color {
+  background: color-mix(in srgb, var(--project-color) 22%, var(--bg-tertiary));
+  border-color: color-mix(in srgb, var(--project-color) 55%, var(--border));
+  color: var(--text-primary);
+}
+
+/* The tab a window is showing right now. */
+.active-session-row.current {
+  background: var(--bg-tertiary);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.active-session-row.current:hover {
+  background: var(--bg-hover);
+}
+
+.active-session-row.current .active-session-name {
+  font-weight: 600;
 }
 
 /* Tab closed, session kept: the row is its only entry point. */

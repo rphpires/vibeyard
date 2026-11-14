@@ -5,9 +5,11 @@ import { STATUS_PRIORITY } from '../project-status.js';
 import { isCliSession } from '../session-utils.js';
 import { esc } from '../dom-utils.js';
 import { t } from '../i18n.js';
+import { projectDisplayName } from '../project-display-name.js';
 import { closeSessionWithConfirm } from '../session-close.js';
 import { revealSession } from '../reveal.js';
 import { isUnread, onChange as onUnreadChange } from '../session-unread.js';
+import { onScreenTabIds, onDetachedChange } from '../session-window-state.js';
 
 export interface ActiveSessionRow {
   projectId: string;
@@ -19,6 +21,10 @@ export interface ActiveSessionRow {
   detached: boolean;
   /** Finished (or asking for input) while unfocused and not yet seen: blink. */
   attention: boolean;
+  /** The tab a window is showing right now (`onScreenTabIds`): highlighted. */
+  current: boolean;
+  /** The project's card color (`ProjectRecord.color`), tints the project pill. */
+  projectColor?: string;
 }
 
 /** Statuses that mean the agent stopped and is waiting on the user. */
@@ -56,9 +62,11 @@ export function selectActiveSessions(
   activeStatuses: Set<SessionStatus>,
   includeTabbed = true,
   unreadOf: (sessionId: string) => boolean = () => false,
+  currentIds: ReadonlySet<string> = new Set(),
 ): ActiveSessionRow[] {
   const rows: ActiveSessionRow[] = [];
   for (const project of projects) {
+    const projectName = projectDisplayName(project);
     for (const session of project.sessions) {
       if (!isCliSession(session)) continue;
       const status = statusOf(session.id);
@@ -66,12 +74,14 @@ export function selectActiveSessions(
       if (!detached && (!includeTabbed || !activeStatuses.has(status))) continue;
       rows.push({
         projectId: project.id,
-        projectName: project.name,
+        projectName,
+        projectColor: project.color,
         sessionId: session.id,
         sessionName: session.name,
         status,
         detached,
         attention: ATTENTION_STATUSES.has(status) && unreadOf(session.id),
+        current: currentIds.has(session.id),
       });
     }
   }
@@ -107,6 +117,7 @@ export function renderActiveSessions(): void {
         resolveActiveStatuses(appState.preferences),
         appState.projects.length > 1,
         isUnread,
+        new Set(onScreenTabIds(appState.projects, appState.activeProjectId)),
       )
     : [];
 
@@ -132,11 +143,17 @@ function rowHtml(row: ActiveSessionRow): string {
   const title = row.detached
     ? `${row.projectName} · ${t('sidebar.activeSessions.detachedTooltip')}`
     : row.projectName;
+  const classes = ['active-session-row', row.status];
+  if (row.detached) classes.push('detached');
+  if (row.attention) classes.push('attention');
+  if (row.current) classes.push('current');
+  // The color is normalized to #rrggbb on load (ensureProjectDefaults), so it is safe in a style attribute.
+  const projectStyle = row.projectColor ? ` style="--project-color: ${esc(row.projectColor)}"` : '';
   return `
-    <div class="active-session-row ${row.status}${row.detached ? ' detached' : ''}${row.attention ? ' attention' : ''}" data-project-id="${esc(row.projectId)}" data-session-id="${esc(row.sessionId)}" title="${esc(title)}">
+    <div class="${classes.join(' ')}" data-project-id="${esc(row.projectId)}" data-session-id="${esc(row.sessionId)}" title="${esc(title)}"${row.current ? ' aria-current="true"' : ''}>
       <span class="project-status ${row.status}" aria-hidden="true"></span>
       <span class="active-session-name">${esc(row.sessionName)}</span>
-      <span class="active-session-project">${esc(row.projectName)}</span>
+      <span class="active-session-project${row.projectColor ? ' has-color' : ''}"${projectStyle}>${esc(row.projectName)}</span>
       <button type="button" class="active-session-close" title="${esc(t('sidebar.activeSessions.closeTooltip'))}" aria-label="${esc(t('sidebar.activeSessions.closeTooltip'))}">&times;</button>
     </div>
   `;
@@ -179,6 +196,8 @@ export function initActiveSessions(): void {
 
   onActivityChange(scheduleRender);
   onUnreadChange(scheduleRender);
+  // Detaching/reattaching the sessions window changes which tab is on screen.
+  onDetachedChange(scheduleRender);
   for (const event of [
     'session-added',
     'session-removed',
