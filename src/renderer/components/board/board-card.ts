@@ -45,7 +45,9 @@ export function createCardElement(task: BoardTask): HTMLElement {
 
   const titleEl = document.createElement('div');
   titleEl.className = 'board-card-title';
-  titleEl.textContent = task.title || truncate(task.prompt, 60) || t('board.card.untitledFallback');
+  titleEl.textContent = task.title || truncate(task.prompt, 160) || t('board.card.untitledFallback');
+  // Long titles are clamped to 3 lines by CSS; the tooltip shows the rest.
+  titleEl.title = task.title || task.prompt.split('\n')[0] || '';
 
   const runBtn = document.createElement('button');
   runBtn.className = 'card-run-btn';

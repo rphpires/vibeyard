@@ -374,3 +374,24 @@ describe('createCardElement priority badge', () => {
     expect(top.children.some(c => c.className.includes('board-card-priority'))).toBe(false);
   });
 });
+
+describe('createCardElement title', () => {
+  function titleOf(card: HTMLElement): StubEl {
+    return (card as unknown as StubEl).children[0].children.find(c => c.className === 'board-card-title')!;
+  }
+
+  it('puts the full title in the tooltip (CSS clamps the visible text)', () => {
+    const long = 'A very long task title that will not fit on a single line of a kanban card';
+    const task = addTask({ title: long, prompt: 'p' })!;
+    const title = titleOf(createCardElement(task));
+    expect(title.textContent).toBe(long);
+    expect(title.title).toBe(long);
+  });
+
+  it('falls back to the first prompt line when the task has no title', () => {
+    const task = addTask({ title: '', prompt: 'first line\nsecond line' })!;
+    const title = titleOf(createCardElement(task));
+    expect(title.textContent).toBe('first line');
+    expect(title.title).toBe('first line');
+  });
+});
