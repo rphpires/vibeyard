@@ -9,7 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { createCtlServer, type CtlServer } from './ctl-server';
 import { isWin } from './platform';
-import type { CtlCommand } from '../shared/ctl-protocol';
+import { CTL_MAX_REQUEST_BYTES, type CtlCommand } from '../shared/ctl-protocol';
 
 let root: string;
 let cmdRoot: string;   // ~/.vibeyard/commands
@@ -154,7 +154,7 @@ describe('ctl server', () => {
   it('answers invalid_request for malformed JSON and for oversize files', () => {
     const s = make(); s.start(); s.onRendererReady();
     drop('req-00000004', '{nope');
-    drop('req-00000005', JSON.stringify({ ...listReq, pad: 'x'.repeat(130 * 1024) }));
+    drop('req-00000005', JSON.stringify({ ...listReq, pad: 'x'.repeat(CTL_MAX_REQUEST_BYTES + 1) }));
     s.scan();
     expect(readResult('req-00000004').error.code).toBe('invalid_request');
     expect(readResult('req-00000005').error.code).toBe('invalid_request');
@@ -463,5 +463,81 @@ describe('ctl server', () => {
       make().stop();
       expect(fs.existsSync(dir)).toBe(false);
     });
+  });
+});
+
+describe('ctl server: relayed (remote) requests', () => {
+  const boardReq = (token = 'good-token', command: unknown = { action: 'board-list' }) => JSON.stringify({ v: 1, token, command });
+  let s: CtlServer;
+
+  beforeEach(() => { s = make(); });
+
+  it('dispatches under a server-chosen id and routes the reply to the responder, once', () => {
+    s.start(); s.onRendererReady();
+    const respond = vi.fn();
+    s.submit(boardReq(), 'caller-1', respond);
+    expect(dispatched).toEqual([{ reqId: expect.stringMatching(/^x-[0-9a-f]{24}$/), callerId: 'caller-1', command: { action: 'board-list' } }]);
+    s.reply(dispatched[0].reqId, { ok: true, result: [] });
+    s.reply(dispatched[0].reqId, { ok: true, result: 'again' });
+    expect(respond).toHaveBeenCalledTimes(1);
+    expect(respond).toHaveBeenCalledWith({ ok: true, result: [] });
+    expect(fs.readdirSync(dir).filter((f) => f.endsWith('.result.json'))).toEqual([]);
+  });
+
+  it("refuses a token that belongs to another session than the one the transport vouches for", () => {
+    s.start(); s.onRendererReady();
+    const respond = vi.fn();
+    s.submit(boardReq(), 'caller-2', respond);
+    expect(respond).toHaveBeenCalledWith({ ok: false, error: { code: 'unauthorized', message: 'caller is not a running Vibeyard tab' } });
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it('refuses non-board commands and --project from a remote caller without dispatching', () => {
+    s.start(); s.onRendererReady();
+    const respond = vi.fn();
+    s.submit(boardReq('good-token', { action: 'new-session', name: 'x' }), 'caller-1', respond);
+    s.submit(boardReq('good-token', { action: 'board-list', project: 'other' }), 'caller-1', respond);
+    expect(respond.mock.calls.map(([r]) => r.error.code)).toEqual(['unsupported', 'unsupported']);
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it('answers disabled while stopped, and invalid_request for oversize or malformed requests', () => {
+    const respond = vi.fn();
+    s.submit(boardReq(), 'caller-1', respond);
+    s.start();
+    s.submit('x'.repeat(CTL_MAX_REQUEST_BYTES + 1), 'caller-1', respond);
+    s.submit('{', 'caller-1', respond);
+    expect(respond.mock.calls.map(([r]) => r.error.code)).toEqual(['disabled', 'invalid_request', 'invalid_request']);
+  });
+
+  it('holds until the renderer is ready, times out after 8 s, and answers what is waiting when turned off', () => {
+    s.start();
+    const old = vi.fn();
+    s.submit(boardReq(), 'caller-1', old);
+    clock += 8_500;
+    const fresh = vi.fn();
+    s.submit(boardReq(), 'caller-1', fresh);
+    s.onRendererReady();
+    expect(old).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'timeout' }) }));
+    expect(dispatched).toHaveLength(1);
+    s.stop();
+    expect(fresh).toHaveBeenCalledWith({ ok: false, error: { code: 'disabled', message: 'external control was turned off' } });
+  });
+
+  it('holds a relayed request for less than a local one, and expires held requests on sweep when the renderer never returns', () => {
+    s.start();
+    const remote = vi.fn();
+    s.submit(boardReq(), 'caller-1', remote);
+    drop('req-00000201', listReq);
+    s.scan();
+    clock += 5_500;
+    s.sweep();
+    expect(remote).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ code: 'timeout' }) }));
+    expect(fs.existsSync(path.join(dir, 'req-00000201.result.json'))).toBe(false);
+    clock += 3_000;
+    s.sweep();
+    expect(readResult('req-00000201')).toMatchObject({ ok: false, error: { code: 'timeout' } });
+    s.onRendererReady();
+    expect(dispatched).toHaveLength(0);
   });
 });

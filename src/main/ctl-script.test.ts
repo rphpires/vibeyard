@@ -231,4 +231,46 @@ describe.skipIf(!hasPython())('vibeyard-ctl client', () => {
     expect(r.stdout).toMatch(/^[\x00-\x7F]*$/);
     expect(JSON.parse(r.stdout).result.command.name).toBe(name);
   });
+  describe('board commands', () => {
+    async function echo(args: string[]): Promise<{ status: number | null; command: unknown }> {
+      fs.writeFileSync(path.join(dir, '.enabled'), '1');
+      const stop = startResponder();
+      const r = await new Promise<{ status: number | null; stdout: string }>((resolve) => {
+        const child = spawn(pythonBin, [pyFile, ...args], { env: { ...process.env, PYTHONIOENCODING: 'utf-8', ...ctlEnv() } });
+        let out = '';
+        child.stdout.on('data', (d) => (out += d));
+        child.on('close', (status) => resolve({ status, stdout: out }));
+      });
+      stop();
+      return { status: r.status, command: JSON.parse(r.stdout).result?.command };
+    }
+
+    it('maps board list filters', async () => {
+      expect(await echo(['board', 'list', '--column', 'To do', '--tag', 'bug', '--priority', 'high']))
+        .toEqual({ status: 0, command: { action: 'board-list', column: 'To do', tag: 'bug', priority: 'high' } });
+    });
+
+    it('maps board add, reading prompt and notes from files and repeating --tag', async () => {
+      const promptFile = path.join(root, 'p.md');
+      const prompt = 'step 1\n"q" $(x) ünï\n';
+      fs.writeFileSync(promptFile, prompt);
+      const r = await echo(['board', 'add', '--title', 'Fix login', '--prompt-file', promptFile, '--notes', 'n', '--tag', 'bug', '--tag', 'ui', '--priority', 'urgent', '--column', 'Backlog']);
+      expect(r).toEqual({ status: 0, command: { action: 'board-add', title: 'Fix login', column: 'Backlog', tags: ['bug', 'ui'], priority: 'urgent', prompt, notes: 'n' } });
+    });
+
+    it('maps board update, move, show and delete', async () => {
+      expect((await echo(['board', 'update', 'abcd', '--priority', 'none', '--add-tag', 'x', '--remove-tag', 'y', '--notes', ''])).command)
+        .toEqual({ action: 'board-update', taskId: 'abcd', priority: 'none', addTags: ['x'], removeTags: ['y'], notes: '' });
+      expect((await echo(['board', 'move', 'abcd', '--column', 'Done', '--position', '0'])).command)
+        .toEqual({ action: 'board-move', taskId: 'abcd', column: 'Done', position: 0 });
+      expect((await echo(['board', 'show', 'abcd', '--project', 'p1'])).command).toEqual({ action: 'board-show', taskId: 'abcd', project: 'p1' });
+      expect((await echo(['board', 'delete', 'abcd'])).command).toEqual({ action: 'board-delete', taskId: 'abcd' });
+    });
+
+    it('rejects a missing board command and an unknown priority locally', () => {
+      fs.writeFileSync(path.join(dir, '.enabled'), '1');
+      expect(JSON.parse(run(['board']).stdout).error.code).toBe('invalid_request');
+      expect(JSON.parse(run(['board', 'add', '--title', 't', '--priority', 'p0']).stdout).error.code).toBe('invalid_request');
+    });
+  });
 });

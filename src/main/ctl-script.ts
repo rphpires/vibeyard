@@ -8,6 +8,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { isWin, pythonBin } from './platform';
 import { CTL_BIN_DIR, CTL_COMMAND_PATH } from './ctl-paths';
+import { CTL_MAX_PROMPT_CHARS } from '../shared/ctl-protocol';
+import { TASK_PRIORITIES } from '../shared/types';
 
 export function buildCtlPython(): string {
   return String.raw`#!/usr/bin/env python3
@@ -17,7 +19,14 @@ import argparse, json, os, sys, time, uuid
 # This Vibeyard instance's own request folder (~/.vibeyard/commands/<pid>-<hex>).
 COMMANDS_DIR = os.environ.get("VIBEYARD_CTL_DIR", "")
 START_ERROR_FILE = COMMANDS_DIR + ".error"
-MAX_PROMPT = 64 * 1024
+MAX_PROMPT = ${CTL_MAX_PROMPT_CHARS}
+PRIORITIES = ${JSON.stringify(TASK_PRIORITIES)}
+BOARD_NOTE = (
+    "Task ids may be shortened to a unique prefix of 4+ characters. Without --project "
+    "a command uses the calling tab's project; pass --project to reach a task on another "
+    "project's board. In a remote (SSH) session only the board commands work, always on "
+    "the session's own project."
+)
 DEFAULT_TIMEOUT = 10.0
 WINDOWS_NOTE = (
     "On Windows, vibeyard-ctl.cmd runs through cmd.exe, which expands %VAR%, "
@@ -57,21 +66,86 @@ def build_parser():
     l = sub.add_parser("list")
     l.add_argument("--project")
     l.add_argument("--mine", action="store_true")
+    b = sub.add_parser("board", help="read and edit the project's Kanban board (tasks)", epilog=BOARD_NOTE)
+    bs = b.add_subparsers(dest="board_action")
+    bl = bs.add_parser("list", help="columns and tasks")
+    bl.add_argument("--project")
+    bl.add_argument("--column", help="only this column (id or title)")
+    bl.add_argument("--tag")
+    bl.add_argument("--priority", choices=PRIORITIES)
+    bsh = bs.add_parser("show")
+    bsh.add_argument("task_id")
+    bsh.add_argument("--project")
+    ba = bs.add_parser("add")
+    ba.add_argument("--title", required=True)
+    ba.add_argument("--project")
+    text_args(ba)
+    ba.add_argument("--column", help="id or title; default: the inbox column")
+    ba.add_argument("--tag", action="append", dest="tags")
+    ba.add_argument("--priority", choices=PRIORITIES)
+    bu = bs.add_parser("update")
+    bu.add_argument("task_id")
+    bu.add_argument("--project")
+    bu.add_argument("--title")
+    text_args(bu)
+    bu.add_argument("--priority", choices=PRIORITIES + ["none"])
+    bu.add_argument("--add-tag", action="append", dest="add_tags")
+    bu.add_argument("--remove-tag", action="append", dest="remove_tags")
+    bm = bs.add_parser("move")
+    bm.add_argument("task_id")
+    bm.add_argument("--column", required=True, help="id or title")
+    bm.add_argument("--position", type=int, help="0 = top; default: bottom")
+    bm.add_argument("--project")
+    bd = bs.add_parser("delete")
+    bd.add_argument("task_id")
+    bd.add_argument("--project")
     return p
+
+def text_args(parser):
+    for name in ("prompt", "notes"):
+        g = parser.add_mutually_exclusive_group()
+        g.add_argument("--" + name)
+        g.add_argument("--%s-file" % name, help="read the %s from this UTF-8 file" % name)
+
+def read_text(a, name):
+    value = getattr(a, name)
+    path = getattr(a, name + "_file")
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as f:
+                value = f.read(MAX_PROMPT + 1)
+        except OSError as e:
+            fail("invalid_request", "cannot read --%s-file: %s" % (name, e))
+    if value is not None and len(value) > MAX_PROMPT:
+        fail("invalid_request", "%s is longer than %d characters" % (name, MAX_PROMPT))
+    return value
+
+def board_command(a):
+    ba = a.board_action
+    if not ba:
+        fail("invalid_request", "missing board command: list, show, add, update, move or delete")
+    cmd = {"action": "board-" + ba}
+    if getattr(a, "task_id", None) is not None:
+        cmd["taskId"] = a.task_id
+    keys = {"project": "project", "column": "column", "tag": "tag", "priority": "priority",
+            "title": "title", "tags": "tags", "position": "position",
+            "add_tags": "addTags", "remove_tags": "removeTags"}
+    for attr, key in keys.items():
+        v = getattr(a, attr, None)
+        if v is not None:
+            cmd[key] = v
+    if ba in ("add", "update"):
+        for name in ("prompt", "notes"):
+            v = read_text(a, name)
+            if v is not None:
+                cmd[name] = v
+    return cmd
 
 def to_command(a):
     if a.action == "new-session":
         cmd = {"action": "new-session", "name": a.name}
-        prompt = a.prompt
-        if a.prompt_file:
-            try:
-                with open(a.prompt_file, "r", encoding="utf-8", newline="") as f:
-                    prompt = f.read(MAX_PROMPT + 1)
-            except OSError as e:
-                fail("invalid_request", "cannot read --prompt-file: %s" % e)
+        prompt = read_text(a, "prompt")
         if prompt is not None:
-            if len(prompt) > MAX_PROMPT:
-                fail("invalid_request", "prompt is longer than %d characters" % MAX_PROMPT)
             cmd["prompt"] = prompt
         for key in ("project", "provider", "profile"):
             v = getattr(a, key)
@@ -84,6 +158,8 @@ def to_command(a):
         return {"action": "rename", "sessionId": a.session_id, "name": a.name}
     if a.action == "close":
         return {"action": "close", "sessionId": a.session_id}
+    if a.action == "board":
+        return board_command(a)
     if a.action == "list":
         cmd = {"action": "list"}
         if a.project is not None:
@@ -91,7 +167,7 @@ def to_command(a):
         if a.mine:
             cmd["mine"] = True
         return cmd
-    fail("invalid_request", "missing command: new-session, rename, close or list")
+    fail("invalid_request", "missing command: new-session, rename, close, list or board")
 
 def timeout_seconds():
     try:

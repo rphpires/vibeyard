@@ -10,7 +10,7 @@ import { addMcpServer, removeMcpServer } from './claude-cli';
 import type { McpServerConfig } from './claude-cli';
 import { loadState, saveState, PersistedState } from './store';
 import { startWatching, cleanupSessionStatus, resyncAllSessions } from './hook-status';
-import { resolveRemoteDir, listSshHosts, listRemoteDirs, listRemoteDirEntries } from './remote-ssh';
+import { resolveRemoteDir, listSshHosts, listRemoteDirs, listRemoteDirEntries, setRemoteCtlHandler } from './remote-ssh';
 import { startCodexSessionWatcher, registerPendingCodexSession, unregisterCodexSession } from './codex-session-watcher';
 import { getGitStatus, getGitFiles, getGitDiff, getGitWorktrees, gitStageFile, gitUnstageFile, gitDiscardFile, getGitRemoteUrl, listGitBranches, checkoutGitBranch, createGitBranch } from './git-status';
 import { startGitWatcher, stopGitWatcher, notifyGitChanged } from './git-watcher';
@@ -932,6 +932,9 @@ export function registerIpcHandlers(): void {
       if (w) w.webContents.send('ctl:command', reqId, callerId, command);
     },
   });
+  // vibeyard-ctl inside an SSH session: the mirror relays the request and its answer.
+  const server = ctlServer;
+  setRemoteCtlHandler((sessionId, raw, respond) => server.submit(raw, sessionId, respond));
   ipcMain.on('ctl:setEnabled', (_event, enabled: boolean) => {
     if (enabled) ctlServer?.start(); else ctlServer?.stop();
   });

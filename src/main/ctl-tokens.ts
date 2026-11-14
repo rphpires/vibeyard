@@ -13,8 +13,14 @@ export function issueCtlToken(sessionId: string): string {
   return token;
 }
 
-export function revokeCtlToken(sessionId: string): void {
+/**
+ * Revoke a session's token. With `only`, revoke it only if it is still that
+ * token: a spawn tearing down after a newer spawn of the same session has
+ * already been issued a fresh one must leave the fresh one alone.
+ */
+export function revokeCtlToken(sessionId: string, only?: string): void {
   const token = sessionToToken.get(sessionId);
+  if (only !== undefined && token !== only) return;
   if (token) tokenToSession.delete(token);
   sessionToToken.delete(sessionId);
 }

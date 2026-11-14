@@ -12,7 +12,7 @@ import { isWin, pathSep, utf8LocaleEnv } from './platform';
 import { nvmDefaultNodeBinDir } from './providers/nvm';
 import { issueCtlToken, revokeCtlToken } from './ctl-tokens';
 import { CTL_BIN_DIR, CTL_COMMAND_PATH, CTL_COMMANDS_DIR } from './ctl-paths';
-import { ensureRemoteSetup, stageRemoteEnv, buildRemoteClaudeCommand, resolveSshBinary, watchRemoteSession, unwatchRemoteSession, type RemoteInfo } from './remote-ssh';
+import { ensureRemoteSetup, stageRemoteEnv, buildRemoteClaudeCommand, resolveSshBinary, watchRemoteSession, unwatchRemoteSession, remoteCtlEnv, type RemoteInfo } from './remote-ssh';
 
 interface PtyInstance {
   process: pty.IPty;
@@ -325,12 +325,20 @@ async function spawnRemotePty(
   }
 
   onData(`\x1b[2mConnecting to ${remoteHost}…\x1b[0m\r\n`);
+  // This spawn tears down only the token and mirror watch it was given: setup
+  // awaits ssh round trips before the spawn reaches `ptys`, so a PTY killed by
+  // a respawn can exit after the newer spawn was issued its own.
   let info: RemoteInfo;
   let envFile: string | undefined;
+  let token: string | undefined;
   try {
     info = await ensureRemoteSetup(remoteHost);
-    envFile = await stageRemoteEnv(info, sessionId, sessionEnv);
+    // vibeyard-ctl on the host, relayed by the mirror. Merged after the user's
+    // env so a project env line cannot spoof the token or the folder.
+    token = issueCtlToken(sessionId);
+    envFile = await stageRemoteEnv(info, sessionId, { ...sessionEnv, ...remoteCtlEnv(info, sessionId, token) });
   } catch (err) {
+    if (token) revokeCtlToken(sessionId, token);
     fail(`Remote setup on ${remoteHost} failed: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
@@ -341,11 +349,16 @@ async function spawnRemotePty(
     settingsPath: info.settingsPath,
     claudeArgs: provider.buildArgs(argOpts),
     envFile,
+    pathPrepend: info.ctlBinDir,
   });
   const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>;
   delete env.CLAUDE_CODE;
 
-  watchRemoteSession(info, sessionId);
+  const watch = watchRemoteSession(info, sessionId);
+  const teardown = () => {
+    unwatchRemoteSession(sessionId, watch);
+    revokeCtlToken(sessionId, token);
+  };
 
   let ptyProcess: pty.IPty;
   try {
@@ -357,19 +370,14 @@ async function spawnRemotePty(
       env,
     });
   } catch (err) {
-    unwatchRemoteSession(sessionId);
+    teardown();
     throw err;
   }
 
   ptyProcess.onData((data) => onData(data));
   ptyProcess.onExit(({ exitCode, signal }) => {
-    const current = ptys.get(sessionId);
-    if (current?.process === ptyProcess) {
-      ptys.delete(sessionId);
-      unwatchRemoteSession(sessionId);
-    } else if (!current) {
-      unwatchRemoteSession(sessionId);
-    }
+    if (ptys.get(sessionId)?.process === ptyProcess) ptys.delete(sessionId);
+    teardown();
     onExit(exitCode, signal);
   });
 

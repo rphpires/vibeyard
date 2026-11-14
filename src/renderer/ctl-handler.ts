@@ -2,7 +2,9 @@
 // injected deps so it can be tested without the DOM; ctl-bridge.ts wires the
 // real appState / session-close / terminal-pane functions.
 import type { ProjectRecord, SessionRecord, ProviderId } from '../shared/types.js';
-import { ctlError, type CtlCommand, type CtlResult, type CtlListEntry, type CtlSessionStatus } from '../shared/ctl-protocol.js';
+import { ctlError, isBoardCommand, type CtlCommand, type CtlResult, type CtlListEntry, type CtlSessionStatus } from '../shared/ctl-protocol.js';
+import { handleBoardCommand, type CtlBoardOps } from './ctl-board-handler.js';
+import { findProject, findSession } from './ctl-lookup.js';
 import type { ExternalSessionOpts } from './state.js';
 import { isCliSession } from './session-utils.js';
 
@@ -19,6 +21,7 @@ export interface CtlHandlerDeps {
   effectiveProvider(requested?: string): string;
   /** The provider a profile belongs to, or undefined when no such profile exists. */
   profileProvider(profileId: string): string | undefined;
+  board: CtlBoardOps;
 }
 
 const RENAMEABLE = (s: SessionRecord) => s.type !== 'kanban' && s.type !== 'project-tab';
@@ -31,33 +34,17 @@ export function toCtlStatus(hook: string, terminal: { spawned: boolean; exited: 
   return 'idle';
 }
 
-function normalizePath(p: string): string {
-  return p.length > 1 ? p.replace(/[\\/]+$/, '') : p;
-}
-
-function findProject(deps: CtlHandlerDeps, ref: string): ProjectRecord | undefined {
-  const want = normalizePath(ref);
-  return deps.projects().find((p) => p.id === ref || normalizePath(p.path) === want);
-}
-
-function findSession(deps: CtlHandlerDeps, sessionId: string): { project: ProjectRecord; session: SessionRecord } | undefined {
-  for (const project of deps.projects()) {
-    const session = project.sessions.find((s) => s.id === sessionId);
-    if (session) return { project, session };
-  }
-  return undefined;
-}
-
 function owns(callerId: string, session: SessionRecord): boolean {
   return session.id === callerId || session.createdBy === callerId;
 }
 
 export function handleCtlCommand(deps: CtlHandlerDeps, callerId: string, command: CtlCommand): CtlResult {
+  if (isBoardCommand(command)) return handleBoardCommand(deps, callerId, command);
   switch (command.action) {
     case 'new-session': {
       const project = command.project !== undefined
-        ? findProject(deps, command.project)
-        : findSession(deps, callerId)?.project;
+        ? findProject(deps.projects(), command.project)
+        : findSession(deps.projects(), callerId)?.project;
       if (!project) return ctlError('unknown_project', command.project !== undefined ? `no project '${command.project}'` : 'caller tab no longer exists; pass --project');
       // Its sessions each need a folder picked; ctl has no way to give one.
       if (project.temporary) return ctlError('unsupported', 'the Temporary project has no folder; pass --project <id|path> of a real project');
@@ -83,7 +70,7 @@ export function handleCtlCommand(deps: CtlHandlerDeps, callerId: string, command
       return { ok: true, result: { sessionId: session.id, projectId: project.id, name: session.name } };
     }
     case 'rename': {
-      const found = findSession(deps, command.sessionId);
+      const found = findSession(deps.projects(), command.sessionId);
       if (!found) return ctlError('unknown_session', `no session '${command.sessionId}'`);
       if (!owns(callerId, found.session)) return ctlError('not_owner', 'a tab can only rename itself and tabs it created');
       if (!RENAMEABLE(found.session)) return ctlError('unsupported', `cannot rename a ${found.session.type} tab`);
@@ -93,7 +80,7 @@ export function handleCtlCommand(deps: CtlHandlerDeps, callerId: string, command
       return { ok: true, result: { sessionId: found.session.id, name: found.session.name } };
     }
     case 'close': {
-      const found = findSession(deps, command.sessionId);
+      const found = findSession(deps.projects(), command.sessionId);
       if (!found) return ctlError('unknown_session', `no session '${command.sessionId}'`);
       if (!owns(callerId, found.session)) return ctlError('not_owner', 'a tab can only close itself and tabs it created');
       const awaiting = deps.needsCloseConfirmation(found.session.id);
@@ -103,7 +90,7 @@ export function handleCtlCommand(deps: CtlHandlerDeps, callerId: string, command
     case 'list': {
       let projects = deps.projects();
       if (command.project !== undefined) {
-        const project = findProject(deps, command.project);
+        const project = findProject(deps.projects(), command.project);
         if (!project) return ctlError('unknown_project', `no project '${command.project}'`);
         projects = [project];
       }

@@ -10,6 +10,7 @@ import type { ProviderId } from '../shared/types.js';
 import { getDetachedProjectId } from './session-window-state.js';
 import { focusSessionWindow } from './session-window-handle.js';
 import { docForSession } from './reveal.js';
+import { addTask, updateTask, moveTask, deleteTask, ensureTags, normalizeTagName } from './board-state.js';
 
 const deps: CtlHandlerDeps = {
   projects: () => appState.projects,
@@ -32,6 +33,7 @@ const deps: CtlHandlerDeps = {
   isKnownProvider: (id) => getProviderCapabilities(id as ProviderId) !== null,
   effectiveProvider: (requested) => resolveCliProvider(appState.preferences, requested as ProviderId | undefined),
   profileProvider: (profileId) => appState.profiles.find((p) => p.id === profileId)?.providerId,
+  board: { addTask, updateTask, moveTask, deleteTask, ensureTags, normalizeTagName },
 };
 
 export function initCtlBridge(): void {

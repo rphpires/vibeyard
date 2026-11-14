@@ -23,7 +23,12 @@ import {
   isMirrorFileFor,
   buildListDirsScript,
   parseListDirsOutput,
+  remoteCtlEnv,
+  remoteCtlDir,
+  buildCtlResultLine,
+  type MirrorMessage,
 } from './remote-ssh';
+import { buildCtlPython } from './ctl-script';
 import { pythonBin, isWin } from './platform';
 
 const pythonAvailable = spawnSync(pythonBin, ['-c', 'pass']).status === 0;
@@ -63,8 +68,40 @@ describe('remoteLayout', () => {
       scriptDir: '/home/u/.vibeyard/remote/run',
       statusDir: '/home/u/.vibeyard/remote/status',
       envDir: '/home/u/.vibeyard/remote/env',
+      ctlDir: '/home/u/.vibeyard/remote/ctl',
+      ctlBinDir: '/home/u/.vibeyard/remote/run/bin',
       settingsPath: '/home/u/.vibeyard/remote/settings.json',
     });
+  });
+});
+
+describe('remote vibeyard-ctl env', () => {
+  const info = remoteLayout('h', '/home/u');
+
+  it("points the client at the session's own request folder on the host", () => {
+    expect(remoteCtlEnv(info, 'sid-1', 'tok')).toEqual({
+      VIBEYARD_CTL_TOKEN: 'tok',
+      VIBEYARD_CTL: '/home/u/.vibeyard/remote/run/bin/vibeyard-ctl',
+      VIBEYARD_CTL_DIR: '/home/u/.vibeyard/remote/ctl/sid-1',
+    });
+  });
+
+  it('refuses a session id that could leave the ctl folder', () => {
+    expect(() => remoteCtlDir(info, '../x')).toThrow();
+  });
+
+  it('prepends the client folder to the login PATH, after loading the env file', () => {
+    const cmd = buildRemoteClaudeCommand({ sessionId: 's', remotePath: '/p', settingsPath: '/s.json', claudeArgs: [], envFile: '/e.sh', pathPrepend: '/home/u/.vibeyard/remote/run/bin' });
+    const inner = cmd.indexOf('. ');
+    expect(cmd).toContain(`export PATH='\\''/home/u/.vibeyard/remote/run/bin'\\'':"$PATH" && cd`);
+    expect(inner).toBeLessThan(cmd.indexOf('export PATH'));
+  });
+
+  it('encodes a result as one base64 stdin line for the mirror', () => {
+    const line = buildCtlResultLine('sid-1', 'abcdef0123', { ok: true, result: { a: 'ü\n' } });
+    const [op, sid, id, b64, ...rest] = line.split(' ');
+    expect([op, sid, id, rest]).toEqual(['result', 'sid-1', 'abcdef0123', []]);
+    expect(JSON.parse(Buffer.from(b64, 'base64').toString('utf-8'))).toEqual({ ok: true, result: { a: 'ü\n' } });
   });
 });
 
@@ -217,6 +254,17 @@ describe('parseMirrorLine', () => {
     expect(parseMirrorLine('{"op":"x","f":"x.status","b":""}')).toBeNull();
     expect(parseMirrorLine('not json')).toBeNull();
   });
+
+  it('accepts a ctl request and keeps only its fields', () => {
+    expect(parseMirrorLine('{"op":"ctl","s":"sid-1","id":"0123456789abcdef","b":"e30=","f":"x"}')).toEqual({ op: 'ctl', s: 'sid-1', id: '0123456789abcdef', b: 'e30=' });
+  });
+
+  it('rejects ctl requests with unsafe session or request ids', () => {
+    expect(parseMirrorLine('{"op":"ctl","s":"../x","id":"0123456789abcdef","b":""}')).toBeNull();
+    expect(parseMirrorLine('{"op":"ctl","s":"sid","id":"short","b":""}')).toBeNull();
+    expect(parseMirrorLine('{"op":"ctl","s":"sid","id":"0123456789abcdef.x","b":""}')).toBeNull();
+    expect(parseMirrorLine('{"op":"ctl","s":"sid","id":"0123456789abcdef"}')).toBeNull();
+  });
 });
 
 describe.runIf(pythonAvailable)('mirror.py (executed)', () => {
@@ -273,6 +321,69 @@ describe.runIf(pythonAvailable)('mirror.py (executed)', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it('relays a vibeyard-ctl request from the real client and writes the answer back, for watched sessions only', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vy-mirror-ctl-'));
+    const script = path.join(tmp, 'mirror.py');
+    const client = path.join(tmp, 'ctl.py');
+    const dir = path.join(tmp, 'status');
+    const ctlDir = path.join(tmp, 'ctl');
+    fs.writeFileSync(script, MIRROR_PY);
+    fs.writeFileSync(client, buildCtlPython());
+
+    const child = spawn(pythonBin, ['-u', script, dir, ctlDir]);
+    const msgs: MirrorMessage[] = [];
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      buf += d.toString();
+      let i: number;
+      while ((i = buf.indexOf('\n')) !== -1) {
+        const m = parseMirrorLine(buf.slice(0, i).trim());
+        buf = buf.slice(i + 1);
+        if (m) msgs.push(m);
+      }
+    });
+    const waitFor = async (pred: () => boolean) => {
+      for (let i = 0; i < 100 && !pred(); i++) await new Promise((r) => setTimeout(r, 50));
+      expect(pred()).toBe(true);
+    };
+    const runClient = (sid: string, args: string[]) => new Promise<{ status: number | null; stdout: string }>((resolve) => {
+      const c = spawn(pythonBin, [client, ...args], {
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', VIBEYARD_CTL_TOKEN: 'tok', VIBEYARD_CTL_DIR: path.join(ctlDir, sid), VIBEYARD_CTL_TIMEOUT: '5' },
+      });
+      let out = '';
+      c.stdout.on('data', (d) => (out += d));
+      c.on('close', (status) => resolve({ status, stdout: out }));
+    });
+
+    try {
+      await waitFor(() => msgs.some((m) => m.op === 'ready'));
+      child.stdin.write('watch sid1\n');
+      await waitFor(() => fs.existsSync(path.join(ctlDir, 'sid1', '.enabled')));
+
+      const pending = runClient('sid1', ['board', 'add', '--title', 'From host']);
+      await waitFor(() => msgs.some((m) => m.op === 'ctl'));
+      const req = msgs.find((m) => m.op === 'ctl')!;
+      expect(req.s).toBe('sid1');
+      expect(JSON.parse(Buffer.from(req.b!, 'base64').toString('utf-8'))).toEqual({ v: 1, token: 'tok', command: { action: 'board-add', title: 'From host' } });
+
+      child.stdin.write(buildCtlResultLine('sid1', req.id!, { ok: true, result: { id: 't-1' } }) + '\n');
+      const r = await pending;
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout)).toEqual({ ok: true, result: { id: 't-1' } });
+
+      // A session the mirror does not watch has no folder, so its client sees control as off.
+      const unwatched = await runClient('sid2', ['board', 'list']);
+      expect(JSON.parse(unwatched.stdout).error.code).toBe('disabled');
+
+      child.stdin.write('unwatch sid1\n');
+      await waitFor(() => !fs.existsSync(path.join(ctlDir, 'sid1')));
+    } finally {
+      child.stdin.end();
+      await new Promise((r) => child.once('close', r));
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe('parseSshConfig', () => {

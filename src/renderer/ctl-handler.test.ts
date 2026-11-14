@@ -186,3 +186,10 @@ describe('toCtlStatus', () => {
     expect(toCtlStatus(h, t as any)).toBe(expected);
   });
 });
+
+describe('project lookup', () => {
+  it('never matches the Temporary project by its empty path', () => {
+    projects.push({ id: 'vibeyard-temporary', name: 'Temporary', path: '', temporary: true, sessions: [] } as unknown as ProjectRecord);
+    expect(handleCtlCommand(deps, 'tl', { action: 'list', project: '' })).toMatchObject({ ok: false, error: { code: 'unknown_project' } });
+  });
+});

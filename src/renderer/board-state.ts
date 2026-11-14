@@ -5,8 +5,7 @@ export function getBoard(): BoardData | undefined {
   return appState.activeProject?.board;
 }
 
-export function getColumnByBehavior(behavior: ColumnBehavior): BoardColumn | undefined {
-  const board = getBoard();
+export function getColumnByBehavior(behavior: ColumnBehavior, board: BoardData | undefined = getBoard()): BoardColumn | undefined {
   if (!board) return undefined;
   return board.columns.find(c => c.behavior === behavior);
 }
@@ -31,11 +30,11 @@ export function getTaskByCliSessionId(cliSessionId: string): BoardTask | undefin
   return board.tasks.find(t => t.cliSessionId === cliSessionId);
 }
 
-export function addTask(partial: Partial<BoardTask>): BoardTask | undefined {
-  const board = getBoard();
+/** Every mutator takes an optional `board` (default: the active project's), so vibeyard-ctl can edit any project's board. */
+export function addTask(partial: Partial<BoardTask>, board: BoardData | undefined = getBoard()): BoardTask | undefined {
   if (!board) return undefined;
 
-  const columnId = partial.columnId ?? getColumnByBehavior('inbox')?.id ?? board.columns[0]?.id;
+  const columnId = partial.columnId ?? getColumnByBehavior('inbox', board)?.id ?? board.columns[0]?.id;
   if (!columnId) return undefined;
 
   const tasksInColumn = board.tasks.filter(t => t.columnId === columnId);
@@ -64,8 +63,7 @@ export function addTask(partial: Partial<BoardTask>): BoardTask | undefined {
   return task;
 }
 
-export function updateTask(taskId: string, updates: Partial<BoardTask>): void {
-  const board = getBoard();
+export function updateTask(taskId: string, updates: Partial<BoardTask>, board: BoardData | undefined = getBoard()): void {
   if (!board) return;
   const task = board.tasks.find(t => t.id === taskId);
   if (!task) return;
@@ -77,8 +75,7 @@ export function updateTask(taskId: string, updates: Partial<BoardTask>): void {
   appState.notifyBoardChanged();
 }
 
-export function deleteTask(taskId: string): void {
-  const board = getBoard();
+export function deleteTask(taskId: string, board: BoardData | undefined = getBoard()): void {
   if (!board) return;
   const task = board.tasks.find(t => t.id === taskId);
   if (!task) return;
@@ -94,8 +91,7 @@ export function deleteTask(taskId: string): void {
   appState.notifyBoardChanged();
 }
 
-export function moveTask(taskId: string, toColumnId: string, toOrder: number): void {
-  const board = getBoard();
+export function moveTask(taskId: string, toColumnId: string, toOrder: number, board: BoardData | undefined = getBoard()): void {
   if (!board) return;
   const task = board.tasks.find(t => t.id === taskId);
   if (!task) return;
@@ -205,19 +201,38 @@ export function reorderColumns(columnIds: string[]): void {
 
 export const TAG_COLORS = ['blue', 'green', 'amber', 'red', 'purple', 'cyan', 'pink', 'gray'];
 
+/** The form tags are stored and compared in. */
+export function normalizeTagName(name: string): string {
+  return name.toLowerCase().trim();
+}
+
+/** The palette entry for an already-normalized name, created (without notifying) when missing. */
+function registerTag(board: BoardData, normalized: string, color?: string): { tag: TagDefinition; added: boolean } {
+  if (!board.tags) board.tags = [];
+  const existing = board.tags.find(t => t.name === normalized);
+  if (existing) return { tag: existing, added: false };
+  const tag: TagDefinition = { name: normalized, color: color ?? TAG_COLORS[board.tags.length % TAG_COLORS.length] };
+  board.tags.push(tag);
+  return { tag, added: true };
+}
+
 export function addTag(name: string, color?: string): TagDefinition | undefined {
   const board = getBoard();
   if (!board) return undefined;
-  if (!board.tags) board.tags = [];
-
-  const normalized = name.toLowerCase().trim();
-  if (board.tags.some(t => t.name === normalized)) return board.tags.find(t => t.name === normalized);
-
-  const tagColor = color ?? TAG_COLORS[board.tags.length % TAG_COLORS.length];
-  const tag: TagDefinition = { name: normalized, color: tagColor };
-  board.tags.push(tag);
-  appState.notifyBoardChanged();
+  const { tag, added } = registerTag(board, normalizeTagName(name), color);
+  if (added) appState.notifyBoardChanged();
   return tag;
+}
+
+/**
+ * Add the missing palette entries for `names` **without notifying**: the caller
+ * stores the returned names (normalized, deduplicated) on a task through
+ * addTask/updateTask, whose notify covers both changes.
+ */
+export function ensureTags(names: string[], board: BoardData | undefined = getBoard()): string[] {
+  const normalized = [...new Set(names.map(normalizeTagName).filter(Boolean))];
+  if (board) for (const name of normalized) registerTag(board, name);
+  return normalized;
 }
 
 export function removeTag(name: string): void {

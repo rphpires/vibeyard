@@ -44,3 +44,14 @@ describe('stripInheritedCtlEnv', () => {
     expect(env).toEqual({ HOME: '/h' });
   });
 });
+
+describe('revokeCtlToken with a specific token', () => {
+  it('leaves a newer token of the same session alone', () => {
+    const old = issueCtlToken('s-gen');
+    const fresh = issueCtlToken('s-gen');
+    revokeCtlToken('s-gen', old);
+    expect(resolveCtlToken(fresh)).toBe('s-gen');
+    revokeCtlToken('s-gen', fresh);
+    expect(resolveCtlToken(fresh)).toBeUndefined();
+  });
+});

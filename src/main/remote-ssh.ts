@@ -14,9 +14,20 @@
  * file names, so the existing hook-status watcher handles remote sessions
  * exactly like local ones (status, cost, context, name, inspector events).
  *
+ * The same mirror connection carries vibeyard-ctl for remote sessions: the
+ * session gets its own request folder on the host (`ctl/<sid>/`, holding the
+ * `.enabled` marker the client checks), the mirror forwards each request file
+ * as an `op: ctl` line and writes the answer back as `<reqId>.result.json`
+ * when it receives a `result` line on stdin. The ctl.py client is the local
+ * one, unchanged. Only a session the mirror watches may send requests, its
+ * token must belong to that session (`ctlServer.submit`), and only the board
+ * commands on the session's own project are allowed (`scopeViolation`).
+ *
  * Remote layout (under the remote $HOME):
  *   .vibeyard/remote/run/       hook scripts, statusline, mirror.py
+ *   .vibeyard/remote/run/bin/   vibeyard-ctl client
  *   .vibeyard/remote/status/    status files written by the hooks
+ *   .vibeyard/remote/ctl/<sid>/ vibeyard-ctl request folder of one session
  *   .vibeyard/remote/settings.json
  *
  * The hook scripts are not re-implemented here: `installHooksOnly` is run
@@ -31,6 +42,8 @@ import { STATUS_DIR, SCRIPT_DIR, buildStatusLinePython } from './hook-status';
 import { installHooksOnly } from './claude-cli';
 import { isWin, pythonBin } from './platform';
 import { isValidSshHost } from '../shared/ssh-host';
+import { buildCtlPython } from './ctl-script';
+import { ctlError, CTL_MAX_REQUEST_BYTES, CTL_REQ_ID_RE, type CtlResult } from '../shared/ctl-protocol';
 import type { DirEntry } from '../shared/types';
 
 export interface RemoteInfo {
@@ -40,6 +53,10 @@ export interface RemoteInfo {
   statusDir: string;
   /** 0700 dir for one-shot session env files (see `stageRemoteEnv`). */
   envDir: string;
+  /** 0700 parent of each session's vibeyard-ctl request folder. */
+  ctlDir: string;
+  /** Folder holding the remote `vibeyard-ctl` client, prepended to the session's PATH. */
+  ctlBinDir: string;
   settingsPath: string;
 }
 
@@ -82,7 +99,36 @@ export function remoteLayout(host: string, home: string): RemoteInfo {
     scriptDir: `${base}/run`,
     statusDir: `${base}/status`,
     envDir: `${base}/env`,
+    ctlDir: `${base}/ctl`,
+    ctlBinDir: `${base}/run/bin`,
     settingsPath: `${base}/settings.json`,
+  };
+}
+
+/** Session ids name files and folders on the host; mirror.py applies the same rule. */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+function assertSessionId(sessionId: string): void {
+  if (!SESSION_ID_RE.test(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
+}
+
+/** A remote session's vibeyard-ctl request folder (its VIBEYARD_CTL_DIR on the host). */
+export function remoteCtlDir(info: RemoteInfo, sessionId: string): string {
+  assertSessionId(sessionId);
+  return `${info.ctlDir}/${sessionId}`;
+}
+
+/**
+ * The vibeyard-ctl env of a remote session. Merged after the user's env vars,
+ * like `applyCtlEnv` locally, so a project env line cannot spoof the token or
+ * the folder. PATH is prepended in the command itself (`pathPrepend`), since
+ * this file holds literal values and cannot reference the host's $PATH.
+ */
+export function remoteCtlEnv(info: RemoteInfo, sessionId: string, token: string): Record<string, string> {
+  return {
+    VIBEYARD_CTL_TOKEN: token,
+    VIBEYARD_CTL: `${info.ctlBinDir}/vibeyard-ctl`,
+    VIBEYARD_CTL_DIR: remoteCtlDir(info, sessionId),
   };
 }
 
@@ -103,11 +149,14 @@ export function buildRemoteClaudeCommand(opts: {
    * machines.
    */
   envFile?: string;
+  /** Folder put in front of the login PATH (the remote vibeyard-ctl client). */
+  pathPrepend?: string;
 }): string {
   const claudeArgs = ['--settings', opts.settingsPath, ...opts.claudeArgs].map(shQuote).join(' ');
   const f = opts.envFile ? shQuote(opts.envFile) : '';
   const loadEnv = f ? `. ${f}; rc=$?; rm -f ${f}; [ "$rc" = 0 ] && ` : '';
-  const inner = `${loadEnv}cd ${shQuotePath(opts.remotePath)} && exec claude ${claudeArgs}`;
+  const addPath = opts.pathPrepend ? `export PATH=${shQuote(opts.pathPrepend)}:"$PATH" && ` : '';
+  const inner = `${loadEnv}${addPath}cd ${shQuotePath(opts.remotePath)} && exec claude ${claudeArgs}`;
   // `env VAR=…` rather than a `VAR=…` prefix: the remote *login* shell parses
   // this line, and csh/tcsh/old fish have no prefix-assignment syntax.
   return `exec env CLAUDE_IDE_SESSION_ID=${shQuote(opts.sessionId)} bash -lc ${shQuote(inner)}`;
@@ -123,7 +172,7 @@ export function buildEnvScript(env: Record<string, string>): string {
 
 /** Remote path of a session's one-shot env file. */
 export function remoteEnvFile(info: RemoteInfo, sessionId: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error(`invalid session id: ${sessionId}`);
+  assertSessionId(sessionId);
   return `${info.envDir}/${sessionId}.sh`;
 }
 
@@ -194,11 +243,10 @@ export function translateHooks(hooks: HooksConfig, pairs: Array<[string, string]
   return out;
 }
 
-export interface MirrorMessage {
-  op: 'ready' | 'w' | 'a' | 'd';
-  f?: string;
-  b?: string;
-}
+export type MirrorMessage =
+  | { op: 'ready' | 'w' | 'a' | 'd'; f?: string; b?: string }
+  /** A vibeyard-ctl request: `s` is the session whose request folder held it, `id` its file name there. */
+  | { op: 'ctl'; s: string; id: string; b: string };
 
 /** Parse one mirror stdout line; returns null for anything malformed or unsafe. */
 export function parseMirrorLine(line: string): MirrorMessage | null {
@@ -209,15 +257,22 @@ export function parseMirrorLine(line: string): MirrorMessage | null {
     return null;
   }
   if (!msg || typeof msg !== 'object') return null;
-  const m = msg as MirrorMessage;
-  if (m.op === 'ready') return m;
+  const m = msg as { op?: unknown; f?: unknown; b?: unknown; s?: unknown; id?: unknown };
+  if (m.op === 'ready') return { op: 'ready' };
+  if (m.op === 'ctl') {
+    if (typeof m.s !== 'string' || !SESSION_ID_RE.test(m.s)) return null;
+    if (typeof m.id !== 'string' || !CTL_REQ_ID_RE.test(m.id)) return null;
+    if (typeof m.b !== 'string') return null;
+    return { op: 'ctl', s: m.s, id: m.id, b: m.b };
+  }
   if (m.op !== 'w' && m.op !== 'a' && m.op !== 'd') return null;
   if (typeof m.f !== 'string') return null;
   // Only plain status-file names: no separators, no traversal.
   if (!/^[A-Za-z0-9_.-]+$/.test(m.f) || m.f.startsWith('.')) return null;
-  if (!MIRROR_EXTENSIONS.some((ext) => m.f!.endsWith(ext))) return null;
+  const f = m.f;
+  if (!MIRROR_EXTENSIONS.some((ext) => f.endsWith(ext))) return null;
   if (m.op !== 'd' && typeof m.b !== 'string') return null;
-  return m;
+  return m as MirrorMessage;
 }
 
 export interface SshHostEntry {
@@ -320,19 +375,93 @@ export function listSshHosts(configPath: string = path.join(os.homedir(), '.ssh'
 
 /**
  * Remote status mirror. Reads commands on stdin (`reset <sid>`, `watch <sid>`,
- * `unwatch <sid>`) and emits JSON lines for changes to watched sessions' files.
+ * `unwatch <sid>`, `result <sid> <reqId> <base64>`) and emits JSON lines for
+ * changes to watched sessions' files and for their vibeyard-ctl requests.
  * Exits when stdin closes, so it never outlives the local connection.
  */
-export const MIRROR_PY = `import os,sys,time,json,base64,threading
+export const MIRROR_PY = `import os,sys,time,json,base64,threading,re,shutil
 d=sys.argv[1]
 os.makedirs(d,exist_ok=True)
+c=sys.argv[2] if len(sys.argv)>2 else ''
+if c:
+    os.makedirs(c,mode=0o700,exist_ok=True)
 EXT=${JSON.stringify(MIRROR_EXTENSIONS)}
+MAXREQ=${CTL_MAX_REQUEST_BYTES}
+SID=re.compile(${JSON.stringify(SESSION_ID_RE.source)})
+REQID=re.compile(${JSON.stringify(CTL_REQ_ID_RE.source)})
 watched=set()
+ctl_mtime={}
+tick=0
 state={}
 lock=threading.Lock()
 def out(o):
     sys.stdout.write(json.dumps(o)+'\\n')
     sys.stdout.flush()
+def cdir(sid):
+    return os.path.join(c,sid) if c and SID.match(sid) else None
+def ctl_open(sid):
+    p=cdir(sid)
+    if not p:
+        return
+    try:
+        os.makedirs(p,mode=0o700,exist_ok=True)
+        with open(os.path.join(p,'.enabled'),'w') as f:
+            f.write('remote')
+    except OSError:
+        pass
+def ctl_close(sid):
+    p=cdir(sid)
+    if p:
+        shutil.rmtree(p,ignore_errors=True)
+def ctl_result(sid,rid,b):
+    p=cdir(sid)
+    # The local side answers only a session it still watches; an unwatched one's folder is gone.
+    if not p or not REQID.match(rid):
+        return
+    f=os.path.join(p,rid+'.result.json')
+    try:
+        with open(f+'.part','wb') as h:
+            h.write(base64.b64decode(b))
+        os.replace(f+'.part',f)
+    except Exception:
+        pass
+def ctl_scan(sids,sweep):
+    # A file added or removed bumps the folder's mtime, so an unchanged folder
+    # (nearly always: no request pending) costs one stat, not a listing.
+    now=time.time()
+    for sid in sids:
+        p=cdir(sid)
+        if not p:
+            continue
+        try:
+            mt=os.stat(p).st_mtime_ns
+        except OSError:
+            continue
+        if not sweep and ctl_mtime.get(sid)==mt:
+            continue
+        ctl_mtime[sid]=mt
+        try:
+            names=os.listdir(p)
+        except OSError:
+            continue
+        for n in names:
+            f=os.path.join(p,n)
+            if not (n.endswith('.json') and REQID.match(n[:-5])):
+                # Results the client never collected, and its abandoned temp files.
+                if n.endswith('.json') or n.endswith('.tmp') or n.endswith('.part'):
+                    try:
+                        if now-os.stat(f).st_mtime>60:
+                            os.remove(f)
+                    except OSError:
+                        pass
+                continue
+            try:
+                with open(f,'rb') as h:
+                    data=h.read(MAXREQ+1)
+                os.remove(f)
+            except OSError:
+                continue
+            out({'op':'ctl','s':sid,'id':n[:-5],'b':base64.b64encode(data).decode('ascii')})
 def sid_of(n):
     for e in EXT:
         if n.endswith(e):
@@ -346,11 +475,17 @@ def sid_of(n):
 def reader():
     for line in sys.stdin:
         p=line.split()
+        if len(p)==4 and p[0]=='result':
+            with lock:
+                ctl_result(p[1],p[2],p[3])
+            continue
         if len(p)!=2:
             continue
         cmd,sid=p
         with lock:
             if cmd=='reset':
+                ctl_close(sid)
+                ctl_open(sid)
                 try:
                     names=os.listdir(d)
                 except OSError:
@@ -365,11 +500,13 @@ def reader():
                 watched.add(sid)
             elif cmd=='watch':
                 watched.add(sid)
+                ctl_open(sid)
                 for n in list(state):
                     if sid_of(n)==sid:
                         state.pop(n)
             elif cmd=='unwatch':
                 watched.discard(sid)
+                ctl_close(sid)
                 for n in list(state):
                     if sid_of(n)==sid:
                         state.pop(n)
@@ -415,6 +552,10 @@ while True:
             if n not in seen and sid_of(n) in watched:
                 state.pop(n)
                 out({'op':'d','f':n})
+        sids=list(watched)
+    tick+=1
+    # Every 60 s also list unchanged folders, to sweep stale results.
+    ctl_scan(sids,tick%240==0)
     time.sleep(0.25)
 `;
 
@@ -681,6 +822,8 @@ function buildRemoteFiles(info: RemoteInfo): Map<string, string> {
       `#!/bin/sh\nexec python3 ${shQuote(`${info.scriptDir}/statusline_chain.py`)} 2>>${shQuote(`${info.statusDir}/statusline.log`)}\n`,
     );
     files.set(`${info.scriptDir}/mirror.py`, MIRROR_PY);
+    files.set(`${info.ctlBinDir}/ctl.py`, buildCtlPython());
+    files.set(`${info.ctlBinDir}/vibeyard-ctl`, `#!/bin/sh\nexec python3 ${shQuote(`${info.ctlBinDir}/ctl.py`)} "$@"\n`);
     files.set(
       info.settingsPath,
       JSON.stringify(
@@ -702,14 +845,14 @@ function buildRemoteFiles(info: RemoteInfo): Map<string, string> {
 function buildUploadScript(info: RemoteInfo, files: Map<string, string>): string {
   const lines = [
     'set -e',
-    `mkdir -p ${shQuote(info.scriptDir)} ${shQuote(info.statusDir)} ${shQuote(info.envDir)}`,
-    `chmod 700 ${shQuote(info.statusDir)} ${shQuote(info.envDir)}`,
+    `mkdir -p ${shQuote(info.scriptDir)} ${shQuote(info.ctlBinDir)} ${shQuote(info.statusDir)} ${shQuote(info.envDir)} ${shQuote(info.ctlDir)}`,
+    `chmod 700 ${shQuote(info.statusDir)} ${shQuote(info.envDir)} ${shQuote(info.ctlDir)}`,
   ];
   for (const [file, content] of files) {
     const b64 = Buffer.from(content, 'utf-8').toString('base64');
     lines.push(`printf %s ${shQuote(b64)} | base64 -d > ${shQuote(file)}`);
   }
-  lines.push(`chmod +x ${shQuote(`${info.scriptDir}/statusline.sh`)}`);
+  lines.push(`chmod +x ${shQuote(`${info.scriptDir}/statusline.sh`)} ${shQuote(`${info.ctlBinDir}/vibeyard-ctl`)}`);
   lines.push('echo VIBEYARD_SETUP_OK');
   return lines.join('\n') + '\n';
 }
@@ -755,11 +898,62 @@ interface Mirror {
   sessions: Set<string>;
   restartTimer: ReturnType<typeof setTimeout> | null;
   stopped: boolean;
+  /** The current watch of each session in `sessions`. */
+  watches: Map<string, RemoteWatch>;
+}
+
+/**
+ * One `watchRemoteSession` call. Its holder unwatches only this watch, so a
+ * spawn tearing down after a respawn already watched the session again leaves
+ * the new watch alone; vibeyard-ctl answers are tied to it the same way.
+ */
+export interface RemoteWatch {
+  /** vibeyard-ctl requests of this watch awaiting an answer. */
+  ctlInFlight: number;
 }
 
 const mirrors = new Map<string, Mirror>();
 
-function applyMirrorMessage(msg: MirrorMessage, sessions: ReadonlySet<string>): void {
+/** Runs one relayed vibeyard-ctl request; `respond` must be called once. Set by ipc-handlers. */
+export type RemoteCtlHandler = (sessionId: string, raw: string, respond: (result: CtlResult) => void) => void;
+let remoteCtlHandler: RemoteCtlHandler | null = null;
+
+export function setRemoteCtlHandler(handler: RemoteCtlHandler | null): void {
+  remoteCtlHandler = handler;
+}
+
+/** A host may keep only this many requests per session waiting, so it cannot queue work without bound. */
+export const MAX_REMOTE_CTL_IN_FLIGHT = 4;
+
+/** The stdin line that makes the mirror write `result` as the request's answer. */
+export function buildCtlResultLine(sessionId: string, reqId: string, result: CtlResult): string {
+  return `result ${sessionId} ${reqId} ${Buffer.from(JSON.stringify(result), 'utf-8').toString('base64')}`;
+}
+
+function handleRemoteCtl(m: Mirror, sessionId: string, reqId: string, b64: string): void {
+  // Only a session this host runs; the token check in ctlServer.submit then binds it to that session.
+  const watch = m.watches.get(sessionId);
+  if (!watch) return;
+  const inFlight = watch.ctlInFlight++;
+  let answered = false;
+  const respond = (result: CtlResult): void => {
+    if (answered) return;
+    answered = true;
+    watch.ctlInFlight--;
+    // A session that ended (or was re-watched) meanwhile has no request of this id left to answer.
+    if (m.watches.get(sessionId) === watch) sendToMirror(m, buildCtlResultLine(sessionId, reqId, result));
+  };
+  if (inFlight >= MAX_REMOTE_CTL_IN_FLIGHT) { respond(ctlError('invalid_request', 'too many vibeyard-ctl requests in flight; wait for the previous ones')); return; }
+  if (!remoteCtlHandler) { respond(ctlError('disabled', 'external control is not available')); return; }
+  remoteCtlHandler(sessionId, Buffer.from(b64, 'base64').toString('utf-8'), respond);
+}
+
+function applyMirrorMessage(msg: MirrorMessage, m: Mirror): void {
+  if (msg.op === 'ctl') {
+    handleRemoteCtl(m, msg.s, msg.id, msg.b);
+    return;
+  }
+  const sessions = m.sessions;
   if (msg.op === 'ready' || !msg.f || !isMirrorFileFor(msg.f, sessions)) return;
   const target = path.join(STATUS_DIR, msg.f);
   try {
@@ -791,7 +985,7 @@ function sendToMirror(m: Mirror, line: string): void {
 
 function startMirrorProcess(m: Mirror): void {
   if (m.stopped) return;
-  const remoteCmd = `exec python3 -u ${shQuote(`${m.info.scriptDir}/mirror.py`)} ${shQuote(m.info.statusDir)}`;
+  const remoteCmd = `exec python3 -u ${shQuote(`${m.info.scriptDir}/mirror.py`)} ${shQuote(m.info.statusDir)} ${shQuote(m.info.ctlDir)}`;
   const child = spawn(resolveSshBinary(), [...BATCH_OPTS, '-o', 'ServerAliveCountMax=3', m.host, remoteCmd], { windowsHide: true });
   m.child = child;
   try {
@@ -812,7 +1006,7 @@ function startMirrorProcess(m: Mirror): void {
       start = idx + 1;
       scanFrom = start;
       const msg = line ? parseMirrorLine(line) : null;
-      if (msg) applyMirrorMessage(msg, m.sessions);
+      if (msg) applyMirrorMessage(msg, m);
     }
     buf = buf.slice(start);
     if (buf.length > MAX_MIRROR_LINE_CHARS) {
@@ -839,10 +1033,10 @@ function startMirrorProcess(m: Mirror): void {
  * remote status files first (fresh spawn), mirroring what the local watcher
  * gets from cleanupSessionStatus on every exit.
  */
-export function watchRemoteSession(info: RemoteInfo, sessionId: string): void {
+export function watchRemoteSession(info: RemoteInfo, sessionId: string): RemoteWatch {
   let m = mirrors.get(info.host);
   if (!m) {
-    m = { host: info.host, info, child: null, sessions: new Set(), restartTimer: null, stopped: false };
+    m = { host: info.host, info, child: null, sessions: new Set(), restartTimer: null, stopped: false, watches: new Map() };
     mirrors.set(info.host, m);
   }
   if (!m.child) {
@@ -854,12 +1048,18 @@ export function watchRemoteSession(info: RemoteInfo, sessionId: string): void {
     for (const sid of m.sessions) sendToMirror(m, `watch ${sid}`);
   }
   m.sessions.add(sessionId);
+  const watch: RemoteWatch = { ctlInFlight: 0 };
+  m.watches.set(sessionId, watch);
   sendToMirror(m, `reset ${sessionId}`);
+  return watch;
 }
 
-export function unwatchRemoteSession(sessionId: string): void {
+/** Stop mirroring `sessionId`; with `only`, only if that is still its current watch. */
+export function unwatchRemoteSession(sessionId: string, only?: RemoteWatch): void {
   for (const m of mirrors.values()) {
+    if (only && m.watches.get(sessionId) !== only) continue;
     if (!m.sessions.delete(sessionId)) continue;
+    m.watches.delete(sessionId);
     sendToMirror(m, `unwatch ${sessionId}`);
   }
 }
